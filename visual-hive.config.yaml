@@ -35,6 +35,10 @@ contracts:
         - "Production ready"
       textMustNotExist:
         - "Setup incomplete"
+    screenshots:
+      - name: production-ready
+        route: "/"
+        viewport: desktop
 
 viewports:
   desktop:

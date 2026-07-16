@@ -1,0 +1,4 @@
+dist/
+.visual-hive/*
+!.visual-hive/snapshots/
+!.visual-hive/snapshots/*.png

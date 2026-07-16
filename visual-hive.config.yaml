@@ -13,6 +13,17 @@ contracts:
         - name: production-ready
           route: /
           viewport: desktop
+      steps:
+        - action: goto
+          route: /
+          description: Navigate to /
+          state: visible
+          timeoutMs: 15000
+        - action: assertVisible
+          selector: "[data-testid='healthy-marker']"
+          description: Assert [data-testid='healthy-marker'] is visible
+          state: visible
+          timeoutMs: 15000
       selectors:
         mustExist:
             - '[data-testid=''healthy-marker'']'

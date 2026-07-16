@@ -1,0 +1,65 @@
+{
+  "acmm_level": 5,
+  "allowed_auto_merge_paths": [
+    "**/*.spec.*",
+    "**/*.test.*",
+    "**/*_test.go",
+    "test/**",
+    "tests/**"
+  ],
+  "allowed_auto_merge_risk": [
+    0
+  ],
+  "allowed_repair_paths": [
+    "src/**",
+    "**/src/**",
+    "public/**",
+    "**/public/**",
+    "index.html",
+    "**/index.html",
+    "visual-hive.config.yaml",
+    "test/**",
+    "tests/**",
+    "**/test/**",
+    "**/tests/**",
+    "**/*.test.*",
+    "**/*.spec.*",
+    "**/*_test.go"
+  ],
+  "automation": "repair-pr",
+  "coverage": "standard",
+  "default_branch": "main",
+  "distribution_manifest_sha256": "",
+  "execution_mode": "local",
+  "hive_commit": "",
+  "hive_release_repository": "",
+  "hive_release_version": "",
+  "hosted_controller_protocol": 0,
+  "hosted_schedule": "",
+  "hosted_state_branch": "hive/state-1302717710",
+  "hosted_workflow_sha256": "",
+  "max_active_issues": 1,
+  "max_repair_attempts": 2,
+  "provider": "codex",
+  "repository": "DavidDiaz0317/hive-specialist-product-proof-final-20260716-074542",
+  "repository_id": "1302717710",
+  "run_interval_seconds": 900,
+  "schema_version": "hive.integrated-repository-config.v3",
+  "setup_authorization_actor_id": 183157248,
+  "test_commands": [
+    [
+      "npm",
+      "run",
+      "build"
+    ],
+    [
+      "npm",
+      "run",
+      "test"
+    ]
+  ],
+  "visual_hive": true,
+  "visual_hive_config_digest": "fccf7d10f2a1a408fd9f9aa8f2b074afe70721d167f9d67d8f6cb8bebbaa8516",
+  "visual_hive_ref": "73a99d7920e0380b9f57832a5453ef3c9c6748c1",
+  "visual_hive_repository": "DavidDiaz0317/visual-hive"
+}

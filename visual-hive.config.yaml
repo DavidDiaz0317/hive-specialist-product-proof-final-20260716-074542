@@ -1,92 +1,82 @@
-project:
-  name: hive-specialist-product-proof
-  type: static
-  defaultBranch: main
-  setupProfile: free-local
-
-targets:
-  localPreview:
-    kind: command
-    install: "npm ci"
-    build: "npm run build"
-    serve: "npm run serve"
-    url: "http://127.0.0.1:4173"
-    prSafe: true
-    cost: cheap
-
-contracts:
-  - id: production-ready-marker
-    description: "The public page must expose the production-ready marker and status."
-    target: localPreview
-    severity: high
-    runOn:
-      pullRequest: true
-      schedule: true
-    waitFor:
-      - selector: "body"
-        state: visible
-        timeoutMs: 5000
-    selectors:
-      mustExist:
-        - "[data-testid='healthy-marker']"
-      mustNotExist:
-        - "[data-testid='broken-marker']"
-      textMustExist:
-        - "Production ready"
-      textMustNotExist:
-        - "Setup incomplete"
-    screenshots:
-      - name: production-ready
-        route: "/"
-        viewport: desktop
-
-viewports:
-  desktop:
-    width: 1280
-    height: 720
-
-visual:
-  maxDiffPixelRatio: 0.01
-  updateSnapshots: false
-  failOnMissingBaselineInCI: true
-  baselinePlatform: shared
-  snapshotDir: ".visual-hive/snapshots"
-  artifactDir: ".visual-hive/artifacts"
-
-selection:
-  changedFiles:
-    - pattern: "index.html"
-      contracts:
-        - production-ready-marker
-      risk: medium
-
-mutation:
-  enabled: false
-  minScore: 0.7
-  operators: []
-
 ai:
-  enabled: false
-  provider: none
-  neverSoleOracle: true
-  createIssuePrompt: true
-
-providers:
-  argos:
+    createIssuePrompt: true
     enabled: false
-
-integrations:
-  hive:
-    enabled: true
-    mode: guarded_repair
-    labels:
-      - visual-hive
-      - hive/quality
-      - ai-ready
-
+    neverSoleOracle: true
+    provider: none
+contracts:
+    - description: The public page must expose the production-ready marker and status.
+      id: production-ready-marker
+      runOn:
+        pullRequest: true
+        schedule: true
+      screenshots:
+        - name: production-ready
+          route: /
+          viewport: desktop
+      selectors:
+        mustExist:
+            - '[data-testid=''healthy-marker'']'
+        mustNotExist:
+            - '[data-testid=''broken-marker'']'
+        textMustExist:
+            - Production ready
+        textMustNotExist:
+            - Setup incomplete
+      severity: high
+      target: localPreview
+      waitFor:
+        - selector: body
+          state: visible
+          timeoutMs: 5000
 github:
-  enabled: true
-  issueLabels:
-    - visual-hive
-    - product-proof
-  commentMarker: "<!-- visual-hive-report -->"
+    commentMarker: <!-- visual-hive-report -->
+    enabled: true
+    issueLabels:
+        - visual-hive
+        - product-proof
+integrations:
+    hive:
+        enabled: true
+        labels:
+            - visual-hive
+            - hive/quality
+            - ai-ready
+        mode: guarded_repair
+mutation:
+    enabled: false
+    minScore: 0.7
+    operators: []
+project:
+    defaultBranch: main
+    name: hive-specialist-product-proof
+    setupProfile: free-local
+    type: static
+providers:
+    argos:
+        enabled: false
+selection:
+    changedFiles:
+        - contracts:
+            - production-ready-marker
+          pattern: index.html
+          risk: medium
+targets:
+    localPreview:
+        build: npm run build
+        cost: cheap
+        install: npm ci
+        kind: command
+        prSafe: true
+        serve: npm run serve
+        url: http://127.0.0.1:4173
+viewports:
+    desktop:
+        height: 720
+        width: 1280
+visual:
+    artifactDir: .visual-hive/artifacts
+    baselinePlatform: shared
+    failOnMissingBaselineInCI: true
+    maxDiffPixelRatio: 0.01
+    snapshotDir: .visual-hive/snapshots
+    updateSnapshots: false

@@ -1,0 +1,2018 @@
+name: Visual Hive PR
+
+on:
+  pull_request:
+  # Base-branch-only uninstall publication. No proposed checkout, dependency,
+  # test, or Visual Hive process is ever executed by this event.
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions: {}
+
+concurrency:
+  group: visual-hive-pr-${{ github.event_name }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  setup-authorization:
+    name: Hive setup authorization
+    if: ${{ github.event_name == 'pull_request' || (github.event_name == 'pull_request_target' && github.event.pull_request.head.ref == 'hive/uninstall-1302717710' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: read
+    outputs:
+      authorized: ${{ steps.authorize.outputs.authorized }}
+      context: ${{ steps.authorize.outputs.context }}
+      binding_digest: ${{ steps.authorize.outputs.binding_digest }}
+      diff_digest: ${{ steps.authorize.outputs.diff_digest }}
+      operation: ${{ steps.authorize.outputs.operation }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          # The authorization lane reads proposed Git objects but never checks
+          # out the proposed tree, including under pull_request_target.
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 22.23.1
+      - name: Verify out-of-band exact setup authorization
+        id: authorize
+        shell: bash
+        env:
+          HIVE_STATUS_TOKEN: ${{ github.token }}
+          HIVE_API_URL: ${{ github.api_url }}
+          HIVE_REPOSITORY: ${{ github.repository }}
+          HIVE_REPOSITORY_ID: ${{ github.event.repository.id }}
+          HIVE_PULL_REQUEST: ${{ github.event.pull_request.number }}
+          HIVE_PULL_REQUEST_URL: ${{ github.event.pull_request.html_url }}
+          HIVE_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          HIVE_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HIVE_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HIVE_BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name }}
+          HIVE_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HIVE_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HIVE_EXPECTED_HEAD_REF: hive/setup-1302717710
+          HIVE_EXPECTED_UPGRADE_REF: hive/upgrade-1302717710
+          HIVE_EXPECTED_ROLLBACK_REF: hive/rollback-1302717710
+          HIVE_EXPECTED_AUTHORIZER_TRANSFER_REF: hive/authorizer-transfer-1302717710
+          HIVE_EXPECTED_UNINSTALL_REF: hive/uninstall-1302717710
+          HIVE_EXPECTED_BASE_REF: main
+          HIVE_AUTHORIZER_ID: "183157248"
+          HIVE_TRANSFER_AUTHORIZER_ID: "183157248"
+          HIVE_REQUIRED_FILES: '[".hive/integrated.json",".github/workflows/hive-visual-hive.yml","docs/hive-quickstart.md",".github/workflows/visual-hive-pr.yml","docs/visual-hive.md","visual-hive.config.yaml"]'
+          HIVE_REQUIRED_ABSENT: '[".github/workflows/visual-hive-lifecycle.yml",".github/workflows/visual-hive-issue-lifecycle.yml",".github/workflows/visual-hive-trusted-publisher.yml",".github/workflows/visual-hive-failure-issue.yml",".github/workflows/visual-hive-hive-handoff.yml"]'
+          HIVE_ALLOWED_FILES: '[".hive/integrated.json",".github/workflows/hive-visual-hive.yml","docs/hive-quickstart.md","docs/visual-hive.md","visual-hive.config.yaml",".github/workflows/visual-hive-pr.yml",".github/workflows/visual-hive-lifecycle.yml",".github/workflows/visual-hive-issue-lifecycle.yml",".github/workflows/visual-hive-trusted-publisher.yml",".github/workflows/visual-hive-failure-issue.yml",".github/workflows/visual-hive-hive-handoff.yml"]'
+          HIVE_UNINSTALL_REQUIRED_FILES: '["visual-hive.config.yaml"]'
+          HIVE_UNINSTALL_REQUIRED_ABSENT: '[".hive/integrated.json",".github/workflows/hive-visual-hive.yml","docs/hive-quickstart.md","docs/visual-hive.md",".github/workflows/visual-hive-pr.yml",".github/workflows/visual-hive-lifecycle.yml",".github/workflows/visual-hive-issue-lifecycle.yml",".github/workflows/visual-hive-trusted-publisher.yml",".github/workflows/visual-hive-failure-issue.yml",".github/workflows/visual-hive-hive-handoff.yml"]'
+          HIVE_UNINSTALL_ALLOWED_FILES: '[".hive/integrated.json",".github/workflows/hive-visual-hive.yml","docs/hive-quickstart.md","docs/visual-hive.md","visual-hive.config.yaml",".github/workflows/visual-hive-pr.yml",".github/workflows/visual-hive-lifecycle.yml",".github/workflows/visual-hive-issue-lifecycle.yml",".github/workflows/visual-hive-trusted-publisher.yml",".github/workflows/visual-hive-failure-issue.yml",".github/workflows/visual-hive-hive-handoff.yml"]'
+        run: |
+          set -euo pipefail
+          case "$HIVE_HEAD_REF" in
+            "$HIVE_EXPECTED_HEAD_REF"|"$HIVE_EXPECTED_UPGRADE_REF"|"$HIVE_EXPECTED_ROLLBACK_REF"|"$HIVE_EXPECTED_AUTHORIZER_TRANSFER_REF"|"$HIVE_EXPECTED_UNINSTALL_REF")
+              authorization_header="$(printf 'x-access-token:%s' "$HIVE_STATUS_TOKEN" | base64 | tr -d '\r\n')"
+              git -c protocol.file.allow=never -c "http.extraheader=AUTHORIZATION: basic $authorization_header" fetch --force --no-tags --no-recurse-submodules origin "refs/heads/$HIVE_HEAD_REF:refs/remotes/origin/hive-authorization-head"
+              unset authorization_header
+              ;;
+          esac
+          node <<'NODE'
+          const child = require("child_process");
+          const crypto = require("crypto");
+          const fs = require("fs");
+
+          const domain = "hive.setup-diff-tree-blobs.v1";
+          const schema = "hive.setup-pr-authorization.v1";
+          const diffAlgorithm = "hive.setup-diff-tree-blobs.v1+sha256";
+          const contextPrefix = "hive/setup-authorized/";
+          const sha40 = /^[a-f0-9]{40}$/u;
+          const digest64 = /^[a-f0-9]{64}$/u;
+          const oidPattern = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u;
+          const baselinePattern = /^\.visual-hive\/snapshots\/(?:[^/]+\/)*[^/]+\.png$/u;
+          let required = JSON.parse(process.env.HIVE_REQUIRED_FILES || "[]").sort();
+          let absent = JSON.parse(process.env.HIVE_REQUIRED_ABSENT || "[]").sort();
+          let allowed = new Set(JSON.parse(process.env.HIVE_ALLOWED_FILES || "[]"));
+
+          function output(authorized, context, bindingDigest, diffDigest, operation) {
+            const rows = [
+              "authorized=" + (authorized ? "true" : "false"),
+              "context=" + (context || ""),
+              "binding_digest=" + (bindingDigest || ""),
+              "diff_digest=" + (diffDigest || ""),
+              "operation=" + (operation || "")
+            ];
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, rows.join("\n") + "\n");
+          }
+
+          function git(args) {
+            const result = child.spawnSync("git", args, {
+              encoding: null,
+              maxBuffer: 256 * 1024 * 1024,
+              env: { ...process.env, LC_ALL: "C", LANG: "C", GIT_CONFIG_NOSYSTEM: "1", GIT_ATTR_NOSYSTEM: "1", GIT_NO_REPLACE_OBJECTS: "1" }
+            });
+            if (result.status !== 0) throw new Error("git " + args.join(" ") + " failed");
+            return Buffer.from(result.stdout || []);
+          }
+
+          function u64(value) {
+            const result = Buffer.alloc(8);
+            result.writeBigUInt64BE(BigInt(value));
+            return result;
+          }
+
+          function put(hasher, value) {
+            const data = Buffer.isBuffer(value) ? value : Buffer.from(String(value), "utf8");
+            hasher.update(u64(data.length));
+            hasher.update(data);
+          }
+
+          function readNul(raw, state) {
+            const end = raw.indexOf(0, state.offset);
+            if (end < 0) throw new Error("canonical diff ended inside a NUL record");
+            const value = raw.subarray(state.offset, end);
+            state.offset = end + 1;
+            return value;
+          }
+
+          function parseDiff(raw) {
+            const state = { offset: 0 };
+            const records = [];
+            while (state.offset < raw.length) {
+              const header = readNul(raw, state).toString("ascii").trim().split(/\s+/u);
+              const filePath = readNul(raw, state);
+              if (header.length !== 5 || !header[0].startsWith(":") || header[0].length !== 7 || header[1].length !== 6 || !/^[ADMTUX]$/u.test(header[4])) throw new Error("malformed canonical diff-tree record");
+              const oldOID = header[2];
+              const newOID = header[3];
+              if (!oidPattern.test(oldOID) || !oidPattern.test(newOID)) throw new Error("malformed canonical object ID");
+              const pathText = filePath.toString("utf8");
+              if (!pathText || Buffer.from(pathText, "utf8").compare(filePath) !== 0 || pathText.includes("\\") || pathText.includes("\0") || pathText.startsWith("/") || pathText.split("/").some((part) => !part || part === "." || part === "..")) throw new Error("unsafe canonical diff path");
+              records.push({ status: header[4], oldMode: header[0].slice(1), newMode: header[1], oldOID, newOID, path: filePath, pathText });
+            }
+            records.sort((left, right) => Buffer.compare(left.path, right.path));
+            for (let index = 1; index < records.length; index++) if (Buffer.compare(records[index - 1].path, records[index].path) === 0) throw new Error("duplicate canonical diff path");
+            return records;
+          }
+
+          function hashObject(hasher, mode, oid) {
+            if (mode === "000000" || /^0+$/u.test(oid)) {
+              put(hasher, "missing");
+              hasher.update(u64(0));
+              return;
+            }
+            if (mode === "160000") {
+              put(hasher, "gitlink");
+              hasher.update(u64(0));
+              return;
+            }
+            if (!["100644", "100755", "120000"].includes(mode)) throw new Error("unsupported Git mode " + mode);
+            if (git(["cat-file", "-t", oid]).toString("utf8").trim() !== "blob") throw new Error("canonical object is not a blob");
+            const data = git(["cat-file", "blob", oid]);
+            const declared = Number(git(["cat-file", "-s", oid]).toString("utf8").trim());
+            if (!Number.isSafeInteger(declared) || declared !== data.length) throw new Error("canonical blob size mismatch");
+            put(hasher, "blob");
+            hasher.update(u64(data.length));
+            hasher.update(data);
+          }
+
+          function diffEvidence(baseSHA, headSHA) {
+            git(["cat-file", "-e", baseSHA + "^{commit}"]);
+            git(["cat-file", "-e", headSHA + "^{commit}"]);
+            const records = parseDiff(git(["diff-tree", "--no-commit-id", "--raw", "-r", "-z", "--no-renames", baseSHA, headSHA, "--"]));
+            if (records.length === 0) throw new Error("setup authorization refuses an empty diff");
+            const hasher = crypto.createHash("sha256");
+            put(hasher, domain);
+            hasher.update(u64(records.length));
+            for (const record of records) {
+              for (const value of [record.status, record.oldMode, record.newMode, record.oldOID, record.newOID, record.path]) put(hasher, value);
+              hashObject(hasher, record.oldMode, record.oldOID);
+              hashObject(hasher, record.newMode, record.newOID);
+            }
+            return { digest: hasher.digest("hex"), records };
+          }
+
+          function treeEntry(headSHA, filePath) {
+            const raw = git(["ls-tree", "-z", headSHA, "--", ":(literal)" + filePath]);
+            if (raw.length === 0) return null;
+            if (raw[raw.length - 1] !== 0 || raw.subarray(0, raw.length - 1).includes(0)) throw new Error("ambiguous required setup path " + filePath);
+            const row = raw.subarray(0, raw.length - 1);
+            const tab = row.indexOf(9);
+            if (tab < 0 || row.subarray(tab + 1).toString("utf8") !== filePath) throw new Error("inexact required setup path " + filePath);
+            const metadata = row.subarray(0, tab).toString("ascii").trim().split(/\s+/u);
+            if (metadata.length !== 3 || !oidPattern.test(metadata[2])) throw new Error("malformed required setup tree entry");
+            return { mode: metadata[0], type: metadata[1], oid: metadata[2] };
+          }
+
+          function requiredFiles(headSHA) {
+            const files = [];
+            for (const filePath of required) {
+              const entry = treeEntry(headSHA, filePath);
+              if (!entry || entry.mode !== "100644" || entry.type !== "blob") throw new Error("required setup file missing or not regular: " + filePath);
+              const data = git(["cat-file", "blob", entry.oid]);
+              const declared = Number(git(["cat-file", "-s", entry.oid]).toString("utf8").trim());
+              if (!Number.isSafeInteger(declared) || declared !== data.length) throw new Error("required setup blob size mismatch");
+              files.push({ path: filePath, mode: entry.mode, blob_oid: entry.oid, size: data.length, content_sha256: crypto.createHash("sha256").update(data).digest("hex") });
+            }
+            for (const filePath of absent) if (treeEntry(headSHA, filePath)) throw new Error("required absent managed path is present: " + filePath);
+            return files;
+          }
+
+          async function latestStatus(repository, headSHA, expectedContext) {
+            for (let page = 1; page <= 10; page++) {
+              const response = await fetch(process.env.HIVE_API_URL + "/repos/" + repository + "/commits/" + headSHA + "/statuses?per_page=100&page=" + page, {
+                headers: { "Accept": "application/vnd.github+json", "Authorization": "Bearer " + process.env.HIVE_STATUS_TOKEN, "X-GitHub-Api-Version": "2022-11-28" }
+              });
+              if (!response.ok) throw new Error("status lookup returned HTTP " + response.status);
+              const statuses = await response.json();
+              if (!Array.isArray(statuses)) throw new Error("status lookup returned a non-array");
+              const matched = statuses.find((status) => String(status.context || "").toLowerCase() === expectedContext);
+              if (matched) return matched;
+              if (statuses.length < 100) return null;
+            }
+            throw new Error("status lookup exceeded its bounded page limit");
+          }
+
+          async function main() {
+            let context = "";
+            let bindingDigest = "";
+            let diffDigest = "";
+            let operation = "";
+            try {
+              const repository = String(process.env.HIVE_REPOSITORY || "").toLowerCase();
+              const repositoryID = String(process.env.HIVE_REPOSITORY_ID || "");
+              const pullRequest = Number(process.env.HIVE_PULL_REQUEST || "0");
+              let authorizerID = String(process.env.HIVE_AUTHORIZER_ID || "");
+              const transferAuthorizerID = String(process.env.HIVE_TRANSFER_AUTHORIZER_ID || "");
+              const headSHA = String(process.env.HIVE_HEAD_SHA || "").toLowerCase();
+              const baseSHA = String(process.env.HIVE_BASE_SHA || "").toLowerCase();
+              const headRef = String(process.env.HIVE_HEAD_REF || "");
+              const baseRef = String(process.env.HIVE_BASE_REF || "");
+              if (!sha40.test(headSHA) || !sha40.test(baseSHA) || !/^[1-9][0-9]*$/u.test(repositoryID) || !/^[1-9][0-9]*$/u.test(authorizerID) || !/^[1-9][0-9]*$/u.test(transferAuthorizerID) || !Number.isSafeInteger(pullRequest) || pullRequest <= 0) throw new Error("invalid immutable setup event identity");
+              if (baseRef !== process.env.HIVE_EXPECTED_BASE_REF || String(process.env.HIVE_HEAD_REPOSITORY || "").toLowerCase() !== repository || String(process.env.HIVE_BASE_REPOSITORY || "").toLowerCase() !== repository) throw new Error("pull request is not the expected same-repository managed operation");
+              if (headRef === process.env.HIVE_EXPECTED_UNINSTALL_REF) {
+                operation = "uninstall";
+                required = JSON.parse(process.env.HIVE_UNINSTALL_REQUIRED_FILES || "[]").sort();
+                absent = JSON.parse(process.env.HIVE_UNINSTALL_REQUIRED_ABSENT || "[]").sort();
+                allowed = new Set(JSON.parse(process.env.HIVE_UNINSTALL_ALLOWED_FILES || "[]"));
+              } else if (headRef === process.env.HIVE_EXPECTED_UPGRADE_REF) {
+                operation = "upgrade";
+              } else if (headRef === process.env.HIVE_EXPECTED_ROLLBACK_REF) {
+                operation = "rollback";
+              } else if (headRef === process.env.HIVE_EXPECTED_AUTHORIZER_TRANSFER_REF) {
+                operation = "authorizer-transfer";
+                authorizerID = transferAuthorizerID;
+              } else if (headRef === process.env.HIVE_EXPECTED_HEAD_REF) {
+                operation = "setup";
+              } else {
+                throw new Error("pull request is not the expected same-repository managed operation");
+              }
+              const diff = diffEvidence(baseSHA, headSHA);
+              diffDigest = diff.digest;
+              for (const record of diff.records) if (!allowed.has(record.pathText) && !(operation !== "uninstall" && baselinePattern.test(record.pathText))) throw new Error("unmanaged setup path " + record.pathText);
+              const files = requiredFiles(headSHA);
+              const binding = {
+                schema_version: schema,
+                repository,
+                repository_id: repositoryID,
+                pull_request: pullRequest,
+                head_ref: headRef,
+                head_sha: headSHA,
+                base_ref: baseRef,
+                base_sha: baseSHA,
+                authorizer_id: authorizerID,
+                diff_algorithm: diffAlgorithm,
+                diff_sha256: diffDigest,
+                required_files: files,
+                required_absent: absent
+              };
+              bindingDigest = crypto.createHash("sha256").update(JSON.stringify(binding)).digest("hex");
+              if (!digest64.test(bindingDigest)) throw new Error("invalid setup binding digest");
+              context = contextPrefix + bindingDigest;
+              const pollAttempts = Math.min(20, Math.max(1, Number(process.env.HIVE_SETUP_STATUS_POLL_ATTEMPTS || "8")));
+              const pollDelay = Math.min(30000, Math.max(0, Number(process.env.HIVE_SETUP_STATUS_POLL_DELAY_MS || "5000")));
+              let status = null;
+              for (let attempt = 0; attempt < pollAttempts && !status; attempt++) {
+                status = await latestStatus(repository, headSHA, context);
+                if (!status && attempt + 1 < pollAttempts) await new Promise((resolve) => setTimeout(resolve, pollDelay));
+              }
+              const creator = status && status.creator;
+              const exact = status && String(status.state || "").toLowerCase() === "success" && String(status.context || "").toLowerCase() === context &&
+                creator && String(creator.id || "") === authorizerID && String(creator.type || "").toLowerCase() === "user" &&
+                String(status.target_url || "") === String(process.env.HIVE_PULL_REQUEST_URL || "");
+              if (!exact) throw new Error("latest exact-head setup status was absent or did not match creator/target/state");
+              output(true, context, bindingDigest, diffDigest, operation);
+            } catch (error) {
+              console.log("Setup authorization not present: " + String(error && error.message ? error.message : error));
+              output(false, context, bindingDigest, diffDigest, operation);
+            }
+          }
+
+          main().catch((error) => {
+            console.log("Setup authorization verifier failed closed: " + String(error));
+            output(false, "", "", "", "");
+          });
+          NODE
+
+  uninstall-required-check:
+    name: Publish exact Hive uninstall check
+    needs: setup-authorization
+    if: ${{ always() && github.event_name == 'pull_request_target' && needs.setup-authorization.outputs.operation == 'uninstall' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      checks: write
+    steps:
+      - name: Publish exact authorized uninstall check
+        shell: bash
+        env:
+          HIVE_CHECK_TOKEN: ${{ github.token }}
+          HIVE_API_URL: ${{ github.api_url }}
+          HIVE_REPOSITORY: ${{ github.repository }}
+          HIVE_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HIVE_PULL_REQUEST_URL: ${{ github.event.pull_request.html_url }}
+          HIVE_SETUP_AUTHORIZED: ${{ needs.setup-authorization.outputs.authorized }}
+          HIVE_SETUP_BINDING_DIGEST: ${{ needs.setup-authorization.outputs.binding_digest }}
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const digest = String(process.env.HIVE_SETUP_BINDING_DIGEST || "").toLowerCase();
+          const head = String(process.env.HIVE_HEAD_SHA || "").toLowerCase();
+          const repository = String(process.env.HIVE_REPOSITORY || "");
+          const details = String(process.env.HIVE_PULL_REQUEST_URL || "");
+          if (process.env.HIVE_SETUP_AUTHORIZED !== "true" || !/^[a-f0-9]{64}$/u.test(digest) || !/^[a-f0-9]{40}$/u.test(head) || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository) || !details) {
+            throw new Error("exact out-of-band uninstall authorization is absent");
+          }
+          const external = "hive-uninstall-" + digest;
+          const headers = {
+            "Accept": "application/vnd.github+json",
+            "Authorization": "Bearer " + process.env.HIVE_CHECK_TOKEN,
+            "Content-Type": "application/json",
+            "X-GitHub-Api-Version": "2022-11-28"
+          };
+          async function request(url, init = {}) {
+            const response = await fetch(url, { ...init, headers: { ...headers, ...(init.headers || {}) } });
+            const text = await response.text();
+            if (!response.ok) throw new Error("GitHub Checks API returned HTTP " + response.status + ": " + text.slice(0, 300));
+            return text ? JSON.parse(text) : {};
+          }
+          async function exactExisting() {
+            const matched = [];
+            for (let page = 1; page <= 10; page++) {
+              const value = await request(process.env.HIVE_API_URL + "/repos/" + repository + "/commits/" + head + "/check-runs?check_name=visual-hive&filter=all&per_page=100&page=" + page);
+              const runs = Array.isArray(value.check_runs) ? value.check_runs : [];
+              for (const run of runs) {
+                if (String(run.external_id || "") === external && String(run.head_sha || "").toLowerCase() === head && run.app && String(run.app.slug || "").toLowerCase() === "github-actions") matched.push(run);
+              }
+              if (runs.length < 100) break;
+              if (page === 10) throw new Error("exact uninstall check discovery exceeded its bounded page limit");
+            }
+            if (matched.length > 1) throw new Error("multiple exact uninstall checks claim one authorization binding");
+            return matched[0] || null;
+          }
+          async function main() {
+            let check = await exactExisting();
+            if (!check) {
+              check = await request(process.env.HIVE_API_URL + "/repos/" + repository + "/check-runs", {
+                method: "POST",
+                body: JSON.stringify({
+                  name: "visual-hive",
+                  head_sha: head,
+                  status: "completed",
+                  conclusion: "success",
+                  details_url: details,
+                  external_id: external,
+                  output: { title: "Exact Hive uninstall authorized", summary: "Hive verified the immutable cleanup diff out of band. No pull-request code or workflow from the proposed head was executed." }
+                })
+              });
+            }
+            const exact = Number(check.id) > 0 && check.name === "visual-hive" && String(check.head_sha || "").toLowerCase() === head &&
+              check.status === "completed" && check.conclusion === "success" && check.details_url === details && check.external_id === external &&
+              check.app && String(check.app.slug || "").toLowerCase() === "github-actions";
+            if (!exact) throw new Error("created or recovered uninstall check did not match the exact immutable authorization");
+            console.log("Published exact authorized uninstall check " + check.id + " for " + head);
+          }
+          main().catch((error) => { console.error(String(error)); process.exitCode = 1; });
+          NODE
+
+  repository-test-001:
+    name: Hive repository test 001
+    needs: setup-authorization
+    if: ${{ github.event_name == 'pull_request' && needs.setup-authorization.outputs.operation != 'uninstall' }}
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 22.23.1
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.11"
+      - name: Prepare isolated target account
+        shell: bash
+        run: |
+          set -euo pipefail
+          if id -u hive-target >/dev/null 2>&1; then
+            echo "Reserved target account already exists" >&2
+            exit 1
+          fi
+          sudo useradd --create-home --shell /bin/bash hive-target
+          sudo install -d -o hive-target -g hive-target -m 0755 /home/hive-target/.local/bin /home/hive-target/.cache
+          python_bin="$(command -v python)"
+          (cd / && sudo -u hive-target -- env -i HOME=/home/hive-target PATH="$PATH" "$python_bin" -I -m venv /home/hive-target/.venv)
+          target_root="/opt/hive-target"
+          target_workspace="/opt/hive-target/workspace"
+          trusted_root="/opt/hive-target/trusted"
+          test ! -e "$target_root"
+          sudo install -d -o root -g root -m 0755 "$target_root" "$target_workspace" "$trusted_root"
+          test -d "$GITHUB_WORKSPACE"
+          test ! -L "$GITHUB_WORKSPACE"
+          test "$(readlink -f "$GITHUB_WORKSPACE")" = "$GITHUB_WORKSPACE"
+          sudo chown -R hive-target:hive-target "$GITHUB_WORKSPACE"
+          test -d .git
+          test ! -L .git
+          test -f visual-hive.config.yaml
+          test ! -L visual-hive.config.yaml
+          sudo chown -R root:root .git
+          sudo chmod -R a-w .git
+          sudo chown root:root visual-hive.config.yaml
+          sudo chmod 0444 visual-hive.config.yaml
+          sudo chmod 1777 "$GITHUB_WORKSPACE"
+          sudo mount --bind "$GITHUB_WORKSPACE" "$target_workspace"
+          mountpoint -q "$target_workspace"
+          test "$(stat -Lc '%d:%i' "$target_workspace")" = "$(stat -Lc '%d:%i' "$GITHUB_WORKSPACE")"
+          echo "HIVE_TARGET_WORKSPACE=$target_workspace" >> "$GITHUB_ENV"
+      - name: Install repository test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          sudo -u hive-target -- env -i -C "$HIVE_TARGET_WORKSPACE" HOME=/home/hive-target PATH="/home/hive-target/.local/bin:/home/hive-target/.venv/bin:$PATH" LANG=C.UTF-8 CI=true PLAYWRIGHT_BROWSERS_PATH=/home/hive-target/.cache/ms-playwright HIVE_TARGET_WORKSPACE="$HIVE_TARGET_WORKSPACE" HIVE_TARGET_PROCESS=1 bash --noprofile --norc -euo pipefail <<'HIVE_TARGET_DEPENDENCIES'
+          test -n "${HIVE_TARGET_WORKSPACE:-}"
+          test "$(pwd -P)" = "$HIVE_TARGET_WORKSPACE"
+          corepack_enabled=0
+          enable_corepack() {
+            if [ "$corepack_enabled" -eq 0 ]; then
+              corepack enable --install-directory /home/hive-target/.local/bin
+              corepack_enabled=1
+            fi
+          }
+          while IFS= read -r -d '' lockfile; do
+            package_dir="$(dirname "$lockfile")"
+            lock_count=0
+            [ -f "$package_dir/package-lock.json" ] && lock_count=$((lock_count + 1))
+            [ -f "$package_dir/pnpm-lock.yaml" ] && lock_count=$((lock_count + 1))
+            [ -f "$package_dir/yarn.lock" ] && lock_count=$((lock_count + 1))
+            if [ "$lock_count" -ne 1 ]; then
+              echo "Package scope $package_dir must contain exactly one supported lockfile" >&2
+              exit 1
+            fi
+          done < <(find . \( -name package-lock.json -o -name pnpm-lock.yaml -o -name yarn.lock \) -not -path '*/node_modules/*' -not -path './.git/*' -print0 | sort -z)
+          while IFS= read -r -d '' lockfile; do
+            package_dir="$(dirname "$lockfile")"
+            test -f "$package_dir/package.json"
+            test -f "$package_dir/package-lock.json"
+            (cd "$package_dir" && npm ci)
+          done < <(find . -name package-lock.json -not -path '*/node_modules/*' -not -path './.git/*' -print0 | sort -z)
+          while IFS= read -r -d '' lockfile; do
+            enable_corepack
+            package_dir="$(dirname "$lockfile")"
+            (cd "$package_dir" && pnpm install --frozen-lockfile)
+          done < <(find . -name pnpm-lock.yaml -not -path '*/node_modules/*' -not -path './.git/*' -print0 | sort -z)
+          while IFS= read -r -d '' lockfile; do
+            enable_corepack
+            package_dir="$(dirname "$lockfile")"
+            yarn_version="$(cd "$package_dir" && yarn --version)"
+            yarn_major="${yarn_version%%.*}"
+            if ! [[ "$yarn_major" =~ ^[0-9]+$ ]]; then
+              echo "Could not determine Yarn major version for $package_dir" >&2
+              exit 1
+            fi
+            if [ "$yarn_major" -ge 2 ]; then
+              (cd "$package_dir" && yarn install --immutable)
+            else
+              (cd "$package_dir" && yarn install --frozen-lockfile)
+            fi
+          done < <(find . -name yarn.lock -not -path '*/node_modules/*' -not -path './.git/*' -print0 | sort -z)
+          has_ancestor_package_lock() {
+            local candidate="$1"
+            node - "$candidate" <<'NODE'
+          const fs = require("fs");
+          const path = require("path");
+          const root = fs.realpathSync(process.cwd());
+          const target = fs.realpathSync(process.argv[2]);
+          const locks = ["package-lock.json", "pnpm-lock.yaml", "yarn.lock"];
+
+          function patternsFor(scope) {
+            const patterns = [];
+            try {
+              const manifest = JSON.parse(fs.readFileSync(path.join(scope, "package.json"), "utf8"));
+              if (Array.isArray(manifest.workspaces)) patterns.push(...manifest.workspaces);
+              if (manifest.workspaces && Array.isArray(manifest.workspaces.packages)) patterns.push(...manifest.workspaces.packages);
+            } catch (_) {}
+            try {
+              const lines = fs.readFileSync(path.join(scope, "pnpm-workspace.yaml"), "utf8").split(/\r?\n/);
+              let inPackages = false;
+              for (const line of lines) {
+                const inline = line.match(/^\s*packages\s*:\s*\[(.*)\]\s*$/);
+                if (inline) {
+                  for (const value of inline[1].split(",")) patterns.push(value.trim().replace(/^['"]|['"]$/g, ""));
+                  inPackages = false;
+                  continue;
+                }
+                if (/^\s*packages\s*:\s*$/.test(line)) {
+                  inPackages = true;
+                  continue;
+                }
+                if (inPackages && /^\S/.test(line)) inPackages = false;
+                if (inPackages) {
+                  const item = line.match(/^\s*-\s*(['"]?)(.*?)\1\s*(?:#.*)?$/);
+                  if (item && item[2]) patterns.push(item[2]);
+                }
+              }
+            } catch (_) {}
+            return patterns;
+          }
+
+          function globExpression(pattern) {
+            pattern = pattern.split(String.fromCharCode(92)).join("/").replace(/^\.\//, "").replace(/^\/+|\/+$/g, "");
+            let source = "^";
+            for (let index = 0; index < pattern.length; index += 1) {
+              const character = pattern[index];
+              if (character === "*") {
+                if (pattern[index + 1] === "*") {
+                  index += 1;
+                  if (pattern[index + 1] === "/") {
+                    index += 1;
+                    source += "(?:.*/)?";
+                  } else {
+                    source += ".*";
+                  }
+                } else {
+                  source += "[^/]*";
+                }
+              } else if (character === "?") {
+                source += "[^/]";
+              } else {
+                if (".+()|[]{}^$".includes(character)) source += "\\";
+                source += character;
+              }
+            }
+            return new RegExp(source + "$");
+          }
+
+          function owns(scope) {
+            const relative = path.relative(scope, target).split(path.sep).join("/");
+            let matched = false;
+            for (let pattern of patternsFor(scope)) {
+              pattern = String(pattern).trim().split(String.fromCharCode(92)).join("/");
+              const excluded = pattern.startsWith("!");
+              if (excluded) pattern = pattern.slice(1);
+              if (pattern && globExpression(pattern).test(relative)) matched = !excluded;
+            }
+            return matched;
+          }
+
+          function insideRoot(value) {
+            const relative = path.relative(root, value);
+            return relative === "" || (relative !== ".." && !relative.startsWith(".." + path.sep));
+          }
+
+          let scope = target;
+          while (insideRoot(scope)) {
+            const hasLock = locks.some((name) => fs.existsSync(path.join(scope, name)));
+            if (hasLock && (scope === target || owns(scope))) process.exit(0);
+            if (scope === root) break;
+            const parent = path.dirname(scope);
+            if (parent === scope) break;
+            scope = parent;
+          }
+          process.exit(1);
+          NODE
+          }
+          lockless_package_dirs=()
+          while IFS= read -r -d '' manifest; do
+            package_dir="$(dirname "$manifest")"
+            if has_ancestor_package_lock "$package_dir"; then
+              continue
+            fi
+            lockless_package_dirs+=("$package_dir")
+          done < <(find . -name package.json -not -path '*/node_modules/*' -not -path './.git/*' -not -path '*/dist/*' -not -path '*/build/*' -not -path '*/coverage/*' -not -path '*/vendor/*' -not -path './.visual-hive/*' -print0 | sort -z)
+          for package_dir in "${lockless_package_dirs[@]}"; do
+            (cd "$package_dir" && npm install)
+          done
+          if [ -f pyproject.toml ]; then
+            python -m pip install -e .
+          elif [ -f requirements.txt ]; then
+            python -m pip install -r requirements.txt
+          fi
+          while IFS= read -r -d '' playwright_cli; do
+            node "$playwright_cli" install chromium
+          done < <(find . -path '*/node_modules/@playwright/test/cli.js' -not -path './.git/*' -print0 | sort -z)
+          HIVE_TARGET_DEPENDENCIES
+
+          mkdir -p .visual-hive
+          sudo chown -R hive-target:hive-target .visual-hive
+      - name: Stop dependency processes and verify exact tracked source
+        shell: bash
+        env:
+          HIVE_TARGET_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          sudo pkill -KILL -u hive-target 2>/dev/null || true
+          test "$(git rev-parse HEAD)" = "$HIVE_TARGET_HEAD_SHA"
+          git diff --no-ext-diff --no-textconv --exit-code -- .
+          while IFS= read -r -d '' tracked; do
+            if [ -L "$tracked" ]; then
+              sudo chown -h root:root -- "$tracked"
+            else
+              sudo chown root:root -- "$tracked"
+              sudo chmod a-w -- "$tracked"
+            fi
+            directory="$(dirname -- "$tracked")"
+            while :; do
+              sudo chown root:root -- "$directory"
+              sudo chmod 1777 -- "$directory"
+              if [ "$directory" = "." ]; then
+                break
+              fi
+              directory="$(dirname -- "$directory")"
+            done
+          done < <(git ls-files -z)
+      - name: Execute exact repository test command
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo -u hive-target -- env -i -C "$HIVE_TARGET_WORKSPACE" HOME=/home/hive-target PATH="/home/hive-target/.local/bin:/home/hive-target/.venv/bin:$PATH" LANG=C.UTF-8 CI=true PLAYWRIGHT_BROWSERS_PATH=/home/hive-target/.cache/ms-playwright HIVE_TARGET_WORKSPACE="$HIVE_TARGET_WORKSPACE" HIVE_TARGET_PROCESS=1 npm run build
+      - name: Terminate isolated target processes and reverify source
+        if: always()
+        shell: bash
+        env:
+          HIVE_TARGET_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          target_workspace="${HIVE_TARGET_WORKSPACE:-}"
+          cleanup_target_workspace() {
+            if [ -n "$target_workspace" ] && mountpoint -q "$target_workspace"; then
+              sudo umount "$target_workspace" || true
+            fi
+          }
+          trap cleanup_target_workspace EXIT
+          test -n "$target_workspace"
+          sudo pkill -KILL -u hive-target 2>/dev/null || true
+          test "$(git rev-parse HEAD)" = "$HIVE_TARGET_HEAD_SHA"
+          git diff --no-ext-diff --no-textconv --exit-code -- .
+          sudo umount "$target_workspace"
+          trap - EXIT
+          if mountpoint -q "$target_workspace"; then
+            echo "Isolated target workspace remained mounted" >&2
+            exit 1
+          fi
+
+  repository-test-002:
+    name: Hive repository test 002
+    needs: setup-authorization
+    if: ${{ github.event_name == 'pull_request' && needs.setup-authorization.outputs.operation != 'uninstall' }}
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 22.23.1
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.11"
+      - name: Prepare isolated target account
+        shell: bash
+        run: |
+          set -euo pipefail
+          if id -u hive-target >/dev/null 2>&1; then
+            echo "Reserved target account already exists" >&2
+            exit 1
+          fi
+          sudo useradd --create-home --shell /bin/bash hive-target
+          sudo install -d -o hive-target -g hive-target -m 0755 /home/hive-target/.local/bin /home/hive-target/.cache
+          python_bin="$(command -v python)"
+          (cd / && sudo -u hive-target -- env -i HOME=/home/hive-target PATH="$PATH" "$python_bin" -I -m venv /home/hive-target/.venv)
+          target_root="/opt/hive-target"
+          target_workspace="/opt/hive-target/workspace"
+          trusted_root="/opt/hive-target/trusted"
+          test ! -e "$target_root"
+          sudo install -d -o root -g root -m 0755 "$target_root" "$target_workspace" "$trusted_root"
+          test -d "$GITHUB_WORKSPACE"
+          test ! -L "$GITHUB_WORKSPACE"
+          test "$(readlink -f "$GITHUB_WORKSPACE")" = "$GITHUB_WORKSPACE"
+          sudo chown -R hive-target:hive-target "$GITHUB_WORKSPACE"
+          test -d .git
+          test ! -L .git
+          test -f visual-hive.config.yaml
+          test ! -L visual-hive.config.yaml
+          sudo chown -R root:root .git
+          sudo chmod -R a-w .git
+          sudo chown root:root visual-hive.config.yaml
+          sudo chmod 0444 visual-hive.config.yaml
+          sudo chmod 1777 "$GITHUB_WORKSPACE"
+          sudo mount --bind "$GITHUB_WORKSPACE" "$target_workspace"
+          mountpoint -q "$target_workspace"
+          test "$(stat -Lc '%d:%i' "$target_workspace")" = "$(stat -Lc '%d:%i' "$GITHUB_WORKSPACE")"
+          echo "HIVE_TARGET_WORKSPACE=$target_workspace" >> "$GITHUB_ENV"
+      - name: Install repository test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          sudo -u hive-target -- env -i -C "$HIVE_TARGET_WORKSPACE" HOME=/home/hive-target PATH="/home/hive-target/.local/bin:/home/hive-target/.venv/bin:$PATH" LANG=C.UTF-8 CI=true PLAYWRIGHT_BROWSERS_PATH=/home/hive-target/.cache/ms-playwright HIVE_TARGET_WORKSPACE="$HIVE_TARGET_WORKSPACE" HIVE_TARGET_PROCESS=1 bash --noprofile --norc -euo pipefail <<'HIVE_TARGET_DEPENDENCIES'
+          test -n "${HIVE_TARGET_WORKSPACE:-}"
+          test "$(pwd -P)" = "$HIVE_TARGET_WORKSPACE"
+          corepack_enabled=0
+          enable_corepack() {
+            if [ "$corepack_enabled" -eq 0 ]; then
+              corepack enable --install-directory /home/hive-target/.local/bin
+              corepack_enabled=1
+            fi
+          }
+          while IFS= read -r -d '' lockfile; do
+            package_dir="$(dirname "$lockfile")"
+            lock_count=0
+            [ -f "$package_dir/package-lock.json" ] && lock_count=$((lock_count + 1))
+            [ -f "$package_dir/pnpm-lock.yaml" ] && lock_count=$((lock_count + 1))
+            [ -f "$package_dir/yarn.lock" ] && lock_count=$((lock_count + 1))
+            if [ "$lock_count" -ne 1 ]; then
+              echo "Package scope $package_dir must contain exactly one supported lockfile" >&2
+              exit 1
+            fi
+          done < <(find . \( -name package-lock.json -o -name pnpm-lock.yaml -o -name yarn.lock \) -not -path '*/node_modules/*' -not -path './.git/*' -print0 | sort -z)
+          while IFS= read -r -d '' lockfile; do
+            package_dir="$(dirname "$lockfile")"
+            test -f "$package_dir/package.json"
+            test -f "$package_dir/package-lock.json"
+            (cd "$package_dir" && npm ci)
+          done < <(find . -name package-lock.json -not -path '*/node_modules/*' -not -path './.git/*' -print0 | sort -z)
+          while IFS= read -r -d '' lockfile; do
+            enable_corepack
+            package_dir="$(dirname "$lockfile")"
+            (cd "$package_dir" && pnpm install --frozen-lockfile)
+          done < <(find . -name pnpm-lock.yaml -not -path '*/node_modules/*' -not -path './.git/*' -print0 | sort -z)
+          while IFS= read -r -d '' lockfile; do
+            enable_corepack
+            package_dir="$(dirname "$lockfile")"
+            yarn_version="$(cd "$package_dir" && yarn --version)"
+            yarn_major="${yarn_version%%.*}"
+            if ! [[ "$yarn_major" =~ ^[0-9]+$ ]]; then
+              echo "Could not determine Yarn major version for $package_dir" >&2
+              exit 1
+            fi
+            if [ "$yarn_major" -ge 2 ]; then
+              (cd "$package_dir" && yarn install --immutable)
+            else
+              (cd "$package_dir" && yarn install --frozen-lockfile)
+            fi
+          done < <(find . -name yarn.lock -not -path '*/node_modules/*' -not -path './.git/*' -print0 | sort -z)
+          has_ancestor_package_lock() {
+            local candidate="$1"
+            node - "$candidate" <<'NODE'
+          const fs = require("fs");
+          const path = require("path");
+          const root = fs.realpathSync(process.cwd());
+          const target = fs.realpathSync(process.argv[2]);
+          const locks = ["package-lock.json", "pnpm-lock.yaml", "yarn.lock"];
+
+          function patternsFor(scope) {
+            const patterns = [];
+            try {
+              const manifest = JSON.parse(fs.readFileSync(path.join(scope, "package.json"), "utf8"));
+              if (Array.isArray(manifest.workspaces)) patterns.push(...manifest.workspaces);
+              if (manifest.workspaces && Array.isArray(manifest.workspaces.packages)) patterns.push(...manifest.workspaces.packages);
+            } catch (_) {}
+            try {
+              const lines = fs.readFileSync(path.join(scope, "pnpm-workspace.yaml"), "utf8").split(/\r?\n/);
+              let inPackages = false;
+              for (const line of lines) {
+                const inline = line.match(/^\s*packages\s*:\s*\[(.*)\]\s*$/);
+                if (inline) {
+                  for (const value of inline[1].split(",")) patterns.push(value.trim().replace(/^['"]|['"]$/g, ""));
+                  inPackages = false;
+                  continue;
+                }
+                if (/^\s*packages\s*:\s*$/.test(line)) {
+                  inPackages = true;
+                  continue;
+                }
+                if (inPackages && /^\S/.test(line)) inPackages = false;
+                if (inPackages) {
+                  const item = line.match(/^\s*-\s*(['"]?)(.*?)\1\s*(?:#.*)?$/);
+                  if (item && item[2]) patterns.push(item[2]);
+                }
+              }
+            } catch (_) {}
+            return patterns;
+          }
+
+          function globExpression(pattern) {
+            pattern = pattern.split(String.fromCharCode(92)).join("/").replace(/^\.\//, "").replace(/^\/+|\/+$/g, "");
+            let source = "^";
+            for (let index = 0; index < pattern.length; index += 1) {
+              const character = pattern[index];
+              if (character === "*") {
+                if (pattern[index + 1] === "*") {
+                  index += 1;
+                  if (pattern[index + 1] === "/") {
+                    index += 1;
+                    source += "(?:.*/)?";
+                  } else {
+                    source += ".*";
+                  }
+                } else {
+                  source += "[^/]*";
+                }
+              } else if (character === "?") {
+                source += "[^/]";
+              } else {
+                if (".+()|[]{}^$".includes(character)) source += "\\";
+                source += character;
+              }
+            }
+            return new RegExp(source + "$");
+          }
+
+          function owns(scope) {
+            const relative = path.relative(scope, target).split(path.sep).join("/");
+            let matched = false;
+            for (let pattern of patternsFor(scope)) {
+              pattern = String(pattern).trim().split(String.fromCharCode(92)).join("/");
+              const excluded = pattern.startsWith("!");
+              if (excluded) pattern = pattern.slice(1);
+              if (pattern && globExpression(pattern).test(relative)) matched = !excluded;
+            }
+            return matched;
+          }
+
+          function insideRoot(value) {
+            const relative = path.relative(root, value);
+            return relative === "" || (relative !== ".." && !relative.startsWith(".." + path.sep));
+          }
+
+          let scope = target;
+          while (insideRoot(scope)) {
+            const hasLock = locks.some((name) => fs.existsSync(path.join(scope, name)));
+            if (hasLock && (scope === target || owns(scope))) process.exit(0);
+            if (scope === root) break;
+            const parent = path.dirname(scope);
+            if (parent === scope) break;
+            scope = parent;
+          }
+          process.exit(1);
+          NODE
+          }
+          lockless_package_dirs=()
+          while IFS= read -r -d '' manifest; do
+            package_dir="$(dirname "$manifest")"
+            if has_ancestor_package_lock "$package_dir"; then
+              continue
+            fi
+            lockless_package_dirs+=("$package_dir")
+          done < <(find . -name package.json -not -path '*/node_modules/*' -not -path './.git/*' -not -path '*/dist/*' -not -path '*/build/*' -not -path '*/coverage/*' -not -path '*/vendor/*' -not -path './.visual-hive/*' -print0 | sort -z)
+          for package_dir in "${lockless_package_dirs[@]}"; do
+            (cd "$package_dir" && npm install)
+          done
+          if [ -f pyproject.toml ]; then
+            python -m pip install -e .
+          elif [ -f requirements.txt ]; then
+            python -m pip install -r requirements.txt
+          fi
+          while IFS= read -r -d '' playwright_cli; do
+            node "$playwright_cli" install chromium
+          done < <(find . -path '*/node_modules/@playwright/test/cli.js' -not -path './.git/*' -print0 | sort -z)
+          HIVE_TARGET_DEPENDENCIES
+
+          mkdir -p .visual-hive
+          sudo chown -R hive-target:hive-target .visual-hive
+      - name: Stop dependency processes and verify exact tracked source
+        shell: bash
+        env:
+          HIVE_TARGET_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          sudo pkill -KILL -u hive-target 2>/dev/null || true
+          test "$(git rev-parse HEAD)" = "$HIVE_TARGET_HEAD_SHA"
+          git diff --no-ext-diff --no-textconv --exit-code -- .
+          while IFS= read -r -d '' tracked; do
+            if [ -L "$tracked" ]; then
+              sudo chown -h root:root -- "$tracked"
+            else
+              sudo chown root:root -- "$tracked"
+              sudo chmod a-w -- "$tracked"
+            fi
+            directory="$(dirname -- "$tracked")"
+            while :; do
+              sudo chown root:root -- "$directory"
+              sudo chmod 1777 -- "$directory"
+              if [ "$directory" = "." ]; then
+                break
+              fi
+              directory="$(dirname -- "$directory")"
+            done
+          done < <(git ls-files -z)
+      - name: Execute exact repository test command
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo -u hive-target -- env -i -C "$HIVE_TARGET_WORKSPACE" HOME=/home/hive-target PATH="/home/hive-target/.local/bin:/home/hive-target/.venv/bin:$PATH" LANG=C.UTF-8 CI=true PLAYWRIGHT_BROWSERS_PATH=/home/hive-target/.cache/ms-playwright HIVE_TARGET_WORKSPACE="$HIVE_TARGET_WORKSPACE" HIVE_TARGET_PROCESS=1 npm run test
+      - name: Terminate isolated target processes and reverify source
+        if: always()
+        shell: bash
+        env:
+          HIVE_TARGET_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          target_workspace="${HIVE_TARGET_WORKSPACE:-}"
+          cleanup_target_workspace() {
+            if [ -n "$target_workspace" ] && mountpoint -q "$target_workspace"; then
+              sudo umount "$target_workspace" || true
+            fi
+          }
+          trap cleanup_target_workspace EXIT
+          test -n "$target_workspace"
+          sudo pkill -KILL -u hive-target 2>/dev/null || true
+          test "$(git rev-parse HEAD)" = "$HIVE_TARGET_HEAD_SHA"
+          git diff --no-ext-diff --no-textconv --exit-code -- .
+          sudo umount "$target_workspace"
+          trap - EXIT
+          if mountpoint -q "$target_workspace"; then
+            echo "Isolated target workspace remained mounted" >&2
+            exit 1
+          fi
+
+  visual-hive-execution:
+    name: visual-hive-execution
+    needs: setup-authorization
+    if: ${{ github.event_name == 'pull_request' && needs.setup-authorization.outputs.operation != 'uninstall' }}
+    permissions:
+      contents: read
+      actions: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          repository: DavidDiaz0317/visual-hive
+          ref: 73a99d7920e0380b9f57832a5453ef3c9c6748c1
+          path: .hive-visual-tooling
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 22.23.1
+          cache: npm
+          cache-dependency-path: .hive-visual-tooling/package-lock.json
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.11"
+      - name: Build exact Visual Hive tooling before target execution
+        working-directory: .hive-visual-tooling
+        shell: bash
+        env:
+          HIVE_VISUAL_HIVE_REF: 73a99d7920e0380b9f57832a5453ef3c9c6748c1
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HIVE_VISUAL_HIVE_REF"
+          npm ci
+          npm run build
+          test -z "$(git status --porcelain --untracked-files=no)"
+      - name: Seal immutable tooling and prepare isolated target account
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -euo pipefail
+          if id -u hive-target >/dev/null 2>&1; then
+            echo "Reserved target account already exists" >&2
+            exit 1
+          fi
+          sudo useradd --create-home --shell /bin/bash hive-target
+          sudo install -d -o hive-target -g hive-target -m 0755 /home/hive-target/.local/bin /home/hive-target/.cache
+          python_bin="$(command -v python)"
+          (cd / && sudo -u hive-target -- env -i HOME=/home/hive-target PATH="$PATH" "$python_bin" -I -m venv /home/hive-target/.venv)
+          target_root="/opt/hive-target"
+          target_workspace="/opt/hive-target/workspace"
+          trusted_root="/opt/hive-target/trusted"
+          test ! -e "$target_root"
+          sudo install -d -o root -g root -m 0755 "$target_root" "$target_workspace" "$trusted_root"
+          test -d "$GITHUB_WORKSPACE"
+          test ! -L "$GITHUB_WORKSPACE"
+          test "$(readlink -f "$GITHUB_WORKSPACE")" = "$GITHUB_WORKSPACE"
+          sudo chown -R hive-target:hive-target "$GITHUB_WORKSPACE"
+          test -d .git
+          test ! -L .git
+          test -f visual-hive.config.yaml
+          test ! -L visual-hive.config.yaml
+          sudo chown -R root:root .git
+          sudo chmod -R a-w .git
+          sudo chown root:root visual-hive.config.yaml
+          sudo chmod 0444 visual-hive.config.yaml
+          sudo chmod 1777 "$GITHUB_WORKSPACE"
+          sudo mount --bind "$GITHUB_WORKSPACE" "$target_workspace"
+          mountpoint -q "$target_workspace"
+          test "$(stat -Lc '%d:%i' "$target_workspace")" = "$(stat -Lc '%d:%i' "$GITHUB_WORKSPACE")"
+          echo "HIVE_TARGET_WORKSPACE=$target_workspace" >> "$GITHUB_ENV"
+          trusted_tooling="/opt/hive-target/trusted/visual-hive-tooling"
+          sudo mv .hive-visual-tooling "$trusted_tooling"
+          cli="$trusted_tooling/packages/cli/dist/index.js"
+          test -f "$cli"
+          cli_sha="$(sha256sum "$cli" | cut -d ' ' -f 1)"
+          trusted_node="$(readlink -f "$(command -v node)")"
+          tool_cache="$(readlink -f "$RUNNER_TOOL_CACHE")"
+          node_runtime="$(dirname "$(dirname "$trusted_node")")"
+          test -x "$trusted_node"
+          case "$node_runtime" in
+            "$tool_cache"/node/*) ;;
+            *) echo "setup-node resolved outside the GitHub-hosted tool cache" >&2; exit 1 ;;
+          esac
+          sudo chown -R root:root "$node_runtime"
+          sudo chmod -R a-w "$node_runtime"
+          trusted_node_sha="$(sha256sum "$trusted_node" | cut -d ' ' -f 1)"
+          echo "VISUAL_HIVE_CLI=$cli" >> "$GITHUB_ENV"
+          echo "HIVE_VISUAL_HIVE_CLI_SHA=$cli_sha" >> "$GITHUB_ENV"
+          echo "HIVE_TRUSTED_NODE=$trusted_node" >> "$GITHUB_ENV"
+          echo "HIVE_TRUSTED_NODE_SHA=$trusted_node_sha" >> "$GITHUB_ENV"
+          sudo chown -R root:root "$trusted_tooling"
+          sudo chmod -R a-w "$trusted_tooling"
+      - name: Capture immutable pull request scope
+        shell: bash
+        env:
+          HIVE_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HIVE_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          input_dir="/tmp/hive-visual-input-${{ github.run_id }}"
+          sudo install -d -o root -g root -m 0755 "$input_dir"
+          git diff --no-ext-diff --no-textconv --no-renames --name-only "$HIVE_BASE_SHA" "$HIVE_HEAD_SHA" > "$RUNNER_TEMP/changed-files.pr.txt"
+          sudo install -o root -g root -m 0444 "$RUNNER_TEMP/changed-files.pr.txt" "$input_dir/changed-files.pr.txt"
+          echo "HIVE_CHANGED_FILES=$input_dir/changed-files.pr.txt" >> "$GITHUB_ENV"
+      - name: Install target dependencies in isolated account
+        shell: bash
+        run: |
+          set -euo pipefail
+          tooling_playwright="/opt/hive-target/trusted/visual-hive-tooling/node_modules/@playwright/test/cli.js"
+          trusted_browser_path="/opt/hive-target/trusted/playwright-${GITHUB_RUN_ID}"
+          target_browser_staging="/opt/hive-target/playwright-staging-${GITHUB_RUN_ID}"
+          test ! -e "$trusted_browser_path"
+          test ! -e "$target_browser_staging"
+          sudo install -d -o root -g root -m 0755 "$trusted_browser_path"
+          sudo install -d -o hive-target -g hive-target -m 0700 "$target_browser_staging"
+          browser_provisioning_complete=0
+          cleanup_browser_provisioning() {
+            sudo rm -rf -- "$target_browser_staging"
+            if [ "$browser_provisioning_complete" -ne 1 ]; then
+              sudo rm -rf -- "$trusted_browser_path"
+            fi
+          }
+          trap cleanup_browser_provisioning EXIT
+          sudo env PLAYWRIGHT_BROWSERS_PATH="$trusted_browser_path" "$HIVE_TRUSTED_NODE" "$tooling_playwright" install --with-deps chromium
+          trusted_browser_executable="$(PLAYWRIGHT_BROWSERS_PATH="$trusted_browser_path" "$HIVE_TRUSTED_NODE" -e 'const { chromium } = require(process.argv[1]); process.stdout.write(chromium.executablePath())' "/opt/hive-target/trusted/visual-hive-tooling/node_modules/playwright")"
+          trusted_browser_executable="$(readlink -f "$trusted_browser_executable")"
+          trusted_browser_path="$(readlink -f "$trusted_browser_path")"
+          case "$trusted_browser_executable" in
+            "$trusted_browser_path"/*) ;;
+            *) echo "Pinned browser resolved outside its dedicated root" >&2; exit 1 ;;
+          esac
+          if [ ! -x "$trusted_browser_executable" ]; then
+            echo "Pinned Visual Hive Playwright browser executable is missing after install: $trusted_browser_executable" >&2
+            exit 1
+          fi
+
+          sudo -u hive-target -- env -i -C "$HIVE_TARGET_WORKSPACE" HOME=/home/hive-target PATH="/home/hive-target/.local/bin:/home/hive-target/.venv/bin:$PATH" LANG=C.UTF-8 CI=true PLAYWRIGHT_BROWSERS_PATH="$target_browser_staging" HIVE_TARGET_WORKSPACE="$HIVE_TARGET_WORKSPACE" HIVE_TARGET_PROCESS=1 bash --noprofile --norc -euo pipefail <<'HIVE_TARGET_DEPENDENCIES'
+          test -n "${HIVE_TARGET_WORKSPACE:-}"
+          test "$(pwd -P)" = "$HIVE_TARGET_WORKSPACE"
+          corepack_enabled=0
+          enable_corepack() {
+            if [ "$corepack_enabled" -eq 0 ]; then
+              corepack enable --install-directory /home/hive-target/.local/bin
+              corepack_enabled=1
+            fi
+          }
+          while IFS= read -r -d '' lockfile; do
+            package_dir="$(dirname "$lockfile")"
+            lock_count=0
+            [ -f "$package_dir/package-lock.json" ] && lock_count=$((lock_count + 1))
+            [ -f "$package_dir/pnpm-lock.yaml" ] && lock_count=$((lock_count + 1))
+            [ -f "$package_dir/yarn.lock" ] && lock_count=$((lock_count + 1))
+            if [ "$lock_count" -ne 1 ]; then
+              echo "Package scope $package_dir must contain exactly one supported lockfile" >&2
+              exit 1
+            fi
+          done < <(find . \( -name package-lock.json -o -name pnpm-lock.yaml -o -name yarn.lock \) -not -path '*/node_modules/*' -not -path './.git/*' -print0 | sort -z)
+          while IFS= read -r -d '' lockfile; do
+            package_dir="$(dirname "$lockfile")"
+            test -f "$package_dir/package.json"
+            test -f "$package_dir/package-lock.json"
+            (cd "$package_dir" && npm ci)
+          done < <(find . -name package-lock.json -not -path '*/node_modules/*' -not -path './.git/*' -print0 | sort -z)
+          while IFS= read -r -d '' lockfile; do
+            enable_corepack
+            package_dir="$(dirname "$lockfile")"
+            (cd "$package_dir" && pnpm install --frozen-lockfile)
+          done < <(find . -name pnpm-lock.yaml -not -path '*/node_modules/*' -not -path './.git/*' -print0 | sort -z)
+          while IFS= read -r -d '' lockfile; do
+            enable_corepack
+            package_dir="$(dirname "$lockfile")"
+            yarn_version="$(cd "$package_dir" && yarn --version)"
+            yarn_major="${yarn_version%%.*}"
+            if ! [[ "$yarn_major" =~ ^[0-9]+$ ]]; then
+              echo "Could not determine Yarn major version for $package_dir" >&2
+              exit 1
+            fi
+            if [ "$yarn_major" -ge 2 ]; then
+              (cd "$package_dir" && yarn install --immutable)
+            else
+              (cd "$package_dir" && yarn install --frozen-lockfile)
+            fi
+          done < <(find . -name yarn.lock -not -path '*/node_modules/*' -not -path './.git/*' -print0 | sort -z)
+          has_ancestor_package_lock() {
+            local candidate="$1"
+            node - "$candidate" <<'NODE'
+          const fs = require("fs");
+          const path = require("path");
+          const root = fs.realpathSync(process.cwd());
+          const target = fs.realpathSync(process.argv[2]);
+          const locks = ["package-lock.json", "pnpm-lock.yaml", "yarn.lock"];
+
+          function patternsFor(scope) {
+            const patterns = [];
+            try {
+              const manifest = JSON.parse(fs.readFileSync(path.join(scope, "package.json"), "utf8"));
+              if (Array.isArray(manifest.workspaces)) patterns.push(...manifest.workspaces);
+              if (manifest.workspaces && Array.isArray(manifest.workspaces.packages)) patterns.push(...manifest.workspaces.packages);
+            } catch (_) {}
+            try {
+              const lines = fs.readFileSync(path.join(scope, "pnpm-workspace.yaml"), "utf8").split(/\r?\n/);
+              let inPackages = false;
+              for (const line of lines) {
+                const inline = line.match(/^\s*packages\s*:\s*\[(.*)\]\s*$/);
+                if (inline) {
+                  for (const value of inline[1].split(",")) patterns.push(value.trim().replace(/^['"]|['"]$/g, ""));
+                  inPackages = false;
+                  continue;
+                }
+                if (/^\s*packages\s*:\s*$/.test(line)) {
+                  inPackages = true;
+                  continue;
+                }
+                if (inPackages && /^\S/.test(line)) inPackages = false;
+                if (inPackages) {
+                  const item = line.match(/^\s*-\s*(['"]?)(.*?)\1\s*(?:#.*)?$/);
+                  if (item && item[2]) patterns.push(item[2]);
+                }
+              }
+            } catch (_) {}
+            return patterns;
+          }
+
+          function globExpression(pattern) {
+            pattern = pattern.split(String.fromCharCode(92)).join("/").replace(/^\.\//, "").replace(/^\/+|\/+$/g, "");
+            let source = "^";
+            for (let index = 0; index < pattern.length; index += 1) {
+              const character = pattern[index];
+              if (character === "*") {
+                if (pattern[index + 1] === "*") {
+                  index += 1;
+                  if (pattern[index + 1] === "/") {
+                    index += 1;
+                    source += "(?:.*/)?";
+                  } else {
+                    source += ".*";
+                  }
+                } else {
+                  source += "[^/]*";
+                }
+              } else if (character === "?") {
+                source += "[^/]";
+              } else {
+                if (".+()|[]{}^$".includes(character)) source += "\\";
+                source += character;
+              }
+            }
+            return new RegExp(source + "$");
+          }
+
+          function owns(scope) {
+            const relative = path.relative(scope, target).split(path.sep).join("/");
+            let matched = false;
+            for (let pattern of patternsFor(scope)) {
+              pattern = String(pattern).trim().split(String.fromCharCode(92)).join("/");
+              const excluded = pattern.startsWith("!");
+              if (excluded) pattern = pattern.slice(1);
+              if (pattern && globExpression(pattern).test(relative)) matched = !excluded;
+            }
+            return matched;
+          }
+
+          function insideRoot(value) {
+            const relative = path.relative(root, value);
+            return relative === "" || (relative !== ".." && !relative.startsWith(".." + path.sep));
+          }
+
+          let scope = target;
+          while (insideRoot(scope)) {
+            const hasLock = locks.some((name) => fs.existsSync(path.join(scope, name)));
+            if (hasLock && (scope === target || owns(scope))) process.exit(0);
+            if (scope === root) break;
+            const parent = path.dirname(scope);
+            if (parent === scope) break;
+            scope = parent;
+          }
+          process.exit(1);
+          NODE
+          }
+          lockless_package_dirs=()
+          while IFS= read -r -d '' manifest; do
+            package_dir="$(dirname "$manifest")"
+            if has_ancestor_package_lock "$package_dir"; then
+              continue
+            fi
+            lockless_package_dirs+=("$package_dir")
+          done < <(find . -name package.json -not -path '*/node_modules/*' -not -path './.git/*' -not -path '*/dist/*' -not -path '*/build/*' -not -path '*/coverage/*' -not -path '*/vendor/*' -not -path './.visual-hive/*' -print0 | sort -z)
+          for package_dir in "${lockless_package_dirs[@]}"; do
+            (cd "$package_dir" && npm install)
+          done
+          if [ -f pyproject.toml ]; then
+            python -m pip install -e .
+          elif [ -f requirements.txt ]; then
+            python -m pip install -r requirements.txt
+          fi
+          while IFS= read -r -d '' playwright_cli; do
+            node "$playwright_cli" install chromium
+          done < <(find . -path '*/node_modules/@playwright/test/cli.js' -not -path './.git/*' -print0 | sort -z)
+          HIVE_TARGET_DEPENDENCIES
+          sudo pkill -KILL -u hive-target 2>/dev/null || true
+          test -d "$target_browser_staging"
+          if sudo find "$target_browser_staging" -type l -print -quit | grep -q .; then
+            echo "Target Playwright browser staging contains a symbolic link" >&2
+            exit 1
+          fi
+          if sudo find "$target_browser_staging" ! -type d ! -type f -print -quit | grep -q .; then
+            echo "Target Playwright browser staging contains a non-regular entry" >&2
+            exit 1
+          fi
+          test "$(sudo find "$target_browser_staging" -type f | wc -l)" -le 10000
+          test "$(sudo du -sb "$target_browser_staging" | cut -f 1)" -le 2147483648
+          sudo cp -a --no-clobber "$target_browser_staging"/. "$trusted_browser_path"/
+          sudo rm -rf -- "$target_browser_staging"
+          test ! -e "$target_browser_staging"
+          sudo chown -R root:root "$trusted_browser_path"
+          sudo find "$trusted_browser_path" -type d -exec chmod a+rx,a-w {} +
+          sudo find "$trusted_browser_path" -type f -exec chmod a+r,a-w {} +
+          if ! sudo -u hive-target -- test -r "$trusted_browser_path" -a -x "$trusted_browser_path"; then
+            echo "Sealed Playwright browser root is not readable and traversable by the isolated target account: $trusted_browser_path" >&2
+            exit 1
+          fi
+          if sudo -u hive-target -- test -w "$trusted_browser_path"; then
+            echo "Sealed Playwright browser root remains writable by the isolated target account: $trusted_browser_path" >&2
+            exit 1
+          fi
+          HIVE_TRUSTED_PLAYWRIGHT_BROWSERS_PATH="$trusted_browser_path"
+
+          trusted_browser_manifest="$RUNNER_TEMP/hive-trusted-playwright-${GITHUB_RUN_ID}.tsv"
+          test ! -e "$trusted_browser_manifest"
+          touch "$trusted_browser_manifest"
+          chmod 0600 "$trusted_browser_manifest"
+          record_trusted_browser() {
+            scope="$1"
+            runtime="$2"
+            executable="$3"
+            case "$scope$runtime$executable" in
+              *$'\n'*|*$'\t'*) echo "Playwright runtime identity contains unsupported whitespace" >&2; exit 1 ;;
+            esac
+            executable="$(readlink -f "$executable")"
+            case "$executable" in
+              "$trusted_browser_path"/*) ;;
+              *) echo "Playwright runtime $runtime resolved outside the sealed browser root: $executable" >&2; exit 1 ;;
+            esac
+            if [ ! -x "$executable" ]; then
+              echo "Playwright browser provisioning incomplete for $runtime: expected executable is missing at $executable (PLAYWRIGHT_BROWSERS_PATH=$trusted_browser_path)" >&2
+              exit 1
+            fi
+            digest="$(sha256sum "$executable" | cut -d ' ' -f 1)"
+            sudo -u hive-target -- test ! -w "$executable"
+            printf '%s\t%s\t%s\t%s\n' "$scope" "$runtime" "$executable" "$digest" >> "$trusted_browser_manifest"
+          }
+          record_trusted_browser visual-hive "$tooling_playwright" "$trusted_browser_executable"
+          while IFS= read -r -d '' playwright_cli; do
+            target_browser_executable="$(sudo -u hive-target -- env -i -C "$HIVE_TARGET_WORKSPACE" HOME=/home/hive-target PATH="/home/hive-target/.local/bin:/home/hive-target/.venv/bin:$PATH" LANG=C.UTF-8 CI=true PLAYWRIGHT_BROWSERS_PATH="$HIVE_TRUSTED_PLAYWRIGHT_BROWSERS_PATH" HIVE_TARGET_WORKSPACE="$HIVE_TARGET_WORKSPACE" HIVE_TARGET_PROCESS=1 "$HIVE_TRUSTED_NODE" -e 'const path = require("node:path"); const cli = process.argv[1]; const runtime = require(require.resolve("playwright", { paths: [path.dirname(cli)] })); process.stdout.write(runtime.chromium.executablePath())' "$playwright_cli")"
+            record_trusted_browser target "$playwright_cli" "$target_browser_executable"
+          done < <(find "$HIVE_TARGET_WORKSPACE" -path '*/node_modules/@playwright/test/cli.js' -not -path '*/.git/*' -print0 | sort -z)
+          test "$(wc -l < "$trusted_browser_manifest")" -ge 1
+          chmod 0400 "$trusted_browser_manifest"
+          browser_provisioning_complete=1
+          trap - EXIT
+          echo "HIVE_TRUSTED_PLAYWRIGHT_BROWSERS_PATH=$trusted_browser_path" >> "$GITHUB_ENV"
+          echo "HIVE_TRUSTED_BROWSER_EXECUTABLE=$trusted_browser_executable" >> "$GITHUB_ENV"
+          echo "HIVE_TRUSTED_BROWSER_SHA=$(sha256sum "$trusted_browser_executable" | cut -d ' ' -f 1)" >> "$GITHUB_ENV"
+          echo "HIVE_TRUSTED_BROWSER_MANIFEST=$trusted_browser_manifest" >> "$GITHUB_ENV"
+
+          mkdir -p .visual-hive
+          sudo chown -R hive-target:hive-target .visual-hive
+      - name: Stop dependency processes and verify exact tracked source
+        shell: bash
+        env:
+          HIVE_TARGET_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          sudo pkill -KILL -u hive-target 2>/dev/null || true
+          test "$(git rev-parse HEAD)" = "$HIVE_TARGET_HEAD_SHA"
+          git diff --no-ext-diff --no-textconv --exit-code -- .
+          while IFS= read -r -d '' tracked; do
+            if [ -L "$tracked" ]; then
+              sudo chown -h root:root -- "$tracked"
+            else
+              sudo chown root:root -- "$tracked"
+              sudo chmod a-w -- "$tracked"
+            fi
+            directory="$(dirname -- "$tracked")"
+            while :; do
+              sudo chown root:root -- "$directory"
+              sudo chmod 1777 -- "$directory"
+              if [ "$directory" = "." ]; then
+                break
+              fi
+              directory="$(dirname -- "$directory")"
+            done
+          done < <(git ls-files -z)
+      - name: Verify sealed Playwright browser handoff
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_browser_path="/opt/hive-target/trusted/playwright-${GITHUB_RUN_ID}"
+          if [ "${HIVE_TRUSTED_PLAYWRIGHT_BROWSERS_PATH:-}" != "$expected_browser_path" ]; then
+            echo "Trusted Playwright browser path is missing or changed: expected $expected_browser_path, got ${HIVE_TRUSTED_PLAYWRIGHT_BROWSERS_PATH:-<unset>}" >&2
+            exit 1
+          fi
+          if [ ! -d "$HIVE_TRUSTED_PLAYWRIGHT_BROWSERS_PATH" ] || [ -w "$HIVE_TRUSTED_PLAYWRIGHT_BROWSERS_PATH" ]; then
+            echo "Trusted Playwright browser directory is absent or writable: $HIVE_TRUSTED_PLAYWRIGHT_BROWSERS_PATH" >&2
+            exit 1
+          fi
+          if [ ! -f "${HIVE_TRUSTED_BROWSER_MANIFEST:-}" ]; then
+            echo "Trusted Playwright browser manifest is missing; provisioning did not complete" >&2
+            exit 1
+          fi
+          manifest_rows=0
+          while IFS="$(printf '\t')" read -r scope runtime executable digest; do
+            test -n "$scope" && test -n "$runtime" && test -n "$executable" && test -n "$digest"
+            case "$executable" in
+              "$HIVE_TRUSTED_PLAYWRIGHT_BROWSERS_PATH"/*) ;;
+              *) echo "Trusted Playwright manifest executable escaped its sealed root: $executable" >&2; exit 1 ;;
+            esac
+            if [ ! -x "$executable" ]; then
+              echo "Trusted Playwright browser executable is missing before Visual Hive execution: $executable (runtime=$runtime, PLAYWRIGHT_BROWSERS_PATH=$HIVE_TRUSTED_PLAYWRIGHT_BROWSERS_PATH)" >&2
+              exit 1
+            fi
+            test "$(sha256sum "$executable" | cut -d ' ' -f 1)" = "$digest"
+            sudo -u hive-target -- test ! -w "$executable"
+            manifest_rows=$((manifest_rows + 1))
+          done < "$HIVE_TRUSTED_BROWSER_MANIFEST"
+          test "$manifest_rows" -ge 1
+          while IFS= read -r -d '' playwright_cli; do
+            expected_executable="$(sudo -u hive-target -- env -i -C "$HIVE_TARGET_WORKSPACE" HOME=/home/hive-target PATH="/home/hive-target/.local/bin:/home/hive-target/.venv/bin:$PATH" LANG=C.UTF-8 CI=true PLAYWRIGHT_BROWSERS_PATH="$HIVE_TRUSTED_PLAYWRIGHT_BROWSERS_PATH" HIVE_TARGET_WORKSPACE="$HIVE_TARGET_WORKSPACE" HIVE_TARGET_PROCESS=1 "$HIVE_TRUSTED_NODE" -e 'const path = require("node:path"); const cli = process.argv[1]; const runtime = require(require.resolve("playwright", { paths: [path.dirname(cli)] })); process.stdout.write(runtime.chromium.executablePath())' "$playwright_cli")"
+            expected_executable="$(readlink -f "$expected_executable")"
+            if ! grep -Fq "$(printf 'target\t%s\t%s\t' "$playwright_cli" "$expected_executable")" "$HIVE_TRUSTED_BROWSER_MANIFEST"; then
+              echo "Target Playwright runtime lacks a sealed executable binding: $playwright_cli expects $expected_executable" >&2
+              exit 1
+            fi
+            if ! timeout --signal=KILL 60s sudo -u hive-target -- env -i -C "$HIVE_TARGET_WORKSPACE" HOME=/home/hive-target PATH="/home/hive-target/.local/bin:/home/hive-target/.venv/bin:$PATH" LANG=C.UTF-8 CI=true PLAYWRIGHT_BROWSERS_PATH="$HIVE_TRUSTED_PLAYWRIGHT_BROWSERS_PATH" HIVE_TARGET_WORKSPACE="$HIVE_TARGET_WORKSPACE" HIVE_TARGET_PROCESS=1 "$HIVE_TRUSTED_NODE" -e 'const path = require("node:path"); const cli = process.argv[1]; const runtime = require(require.resolve("playwright", { paths: [path.dirname(cli)] })); (async () => { const browser = await runtime.chromium.launch({ headless: true }); await browser.close(); })().catch(error => { console.error(error); process.exit(1); });' "$playwright_cli"; then
+              echo "Target Playwright runtime could not launch its exact sealed headless browser: $playwright_cli (PLAYWRIGHT_BROWSERS_PATH=$HIVE_TRUSTED_PLAYWRIGHT_BROWSERS_PATH)" >&2
+              exit 1
+            fi
+          done < <(find "$HIVE_TARGET_WORKSPACE" -path '*/node_modules/@playwright/test/cli.js' -not -path '*/.git/*' -print0 | sort -z)
+      - name: Run target-facing Visual Hive collection
+        id: target_visual_pipeline
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          sudo -u hive-target -- env -i -C "$HIVE_TARGET_WORKSPACE" HOME=/home/hive-target PATH="/home/hive-target/.local/bin:/home/hive-target/.venv/bin:$PATH" LANG=C.UTF-8 CI=true PLAYWRIGHT_BROWSERS_PATH="$HIVE_TRUSTED_PLAYWRIGHT_BROWSERS_PATH" HIVE_TARGET_WORKSPACE="$HIVE_TARGET_WORKSPACE" HIVE_TARGET_PROCESS=1 "$HIVE_TRUSTED_NODE" "$VISUAL_HIVE_CLI" pipeline --config visual-hive.config.yaml --mode pr --changed-files "$HIVE_CHANGED_FILES" --ci --continue-on-error --skip-install
+          pipeline_exit=$?
+          set -e
+          runner_pipeline_exit="$RUNNER_TEMP/hive-visual-pipeline-exit-${GITHUB_RUN_ID}.txt"
+          rm -f -- "$runner_pipeline_exit"
+          (umask 077 && printf '%s\n' "$pipeline_exit" > "$runner_pipeline_exit")
+          test -f "$runner_pipeline_exit"
+          test ! -L "$runner_pipeline_exit"
+          exit "$pipeline_exit"
+      - name: Terminate target account and reverify immutable tooling
+        id: seal_raw_evidence
+        if: always()
+        shell: bash
+        env:
+          HIVE_TARGET_PIPELINE_OUTCOME: ${{ steps.target_visual_pipeline.outcome }}
+          HIVE_TARGET_PIPELINE_CONCLUSION: ${{ steps.target_visual_pipeline.conclusion }}
+        run: |
+          set -euo pipefail
+          target_workspace="${HIVE_TARGET_WORKSPACE:-}"
+          expected_browser_path="/opt/hive-target/trusted/playwright-${GITHUB_RUN_ID}"
+          expected_browser_manifest="$RUNNER_TEMP/hive-trusted-playwright-${GITHUB_RUN_ID}.tsv"
+          cleanup_trusted_browser() {
+            sudo rm -rf -- "$expected_browser_path"
+            rm -f -- "$expected_browser_manifest"
+          }
+          cleanup_target_workspace() {
+            if [ -n "$target_workspace" ] && mountpoint -q "$target_workspace"; then
+              sudo umount "$target_workspace" || true
+            fi
+            cleanup_trusted_browser
+          }
+          trap cleanup_target_workspace EXIT
+          test -n "$target_workspace"
+          sudo pkill -KILL -u hive-target 2>/dev/null || true
+          if pgrep -u hive-target >/dev/null 2>&1; then
+            echo "Isolated target account still owns a live process" >&2
+            exit 1
+          fi
+          test "$(sha256sum "$VISUAL_HIVE_CLI" | cut -d ' ' -f 1)" = "$HIVE_VISUAL_HIVE_CLI_SHA"
+          test ! -w "$VISUAL_HIVE_CLI"
+          test "$(sha256sum "$HIVE_TRUSTED_NODE" | cut -d ' ' -f 1)" = "$HIVE_TRUSTED_NODE_SHA"
+          sudo -u hive-target -- test ! -w "$HIVE_TRUSTED_NODE"
+          set -euo pipefail
+          expected_browser_path="/opt/hive-target/trusted/playwright-${GITHUB_RUN_ID}"
+          if [ "${HIVE_TRUSTED_PLAYWRIGHT_BROWSERS_PATH:-}" != "$expected_browser_path" ]; then
+            echo "Trusted Playwright browser path is missing or changed: expected $expected_browser_path, got ${HIVE_TRUSTED_PLAYWRIGHT_BROWSERS_PATH:-<unset>}" >&2
+            exit 1
+          fi
+          if [ ! -d "$HIVE_TRUSTED_PLAYWRIGHT_BROWSERS_PATH" ] || [ -w "$HIVE_TRUSTED_PLAYWRIGHT_BROWSERS_PATH" ]; then
+            echo "Trusted Playwright browser directory is absent or writable: $HIVE_TRUSTED_PLAYWRIGHT_BROWSERS_PATH" >&2
+            exit 1
+          fi
+          if [ ! -f "${HIVE_TRUSTED_BROWSER_MANIFEST:-}" ]; then
+            echo "Trusted Playwright browser manifest is missing; provisioning did not complete" >&2
+            exit 1
+          fi
+          manifest_rows=0
+          while IFS="$(printf '\t')" read -r scope runtime executable digest; do
+            test -n "$scope" && test -n "$runtime" && test -n "$executable" && test -n "$digest"
+            case "$executable" in
+              "$HIVE_TRUSTED_PLAYWRIGHT_BROWSERS_PATH"/*) ;;
+              *) echo "Trusted Playwright manifest executable escaped its sealed root: $executable" >&2; exit 1 ;;
+            esac
+            if [ ! -x "$executable" ]; then
+              echo "Trusted Playwright browser executable is missing before Visual Hive execution: $executable (runtime=$runtime, PLAYWRIGHT_BROWSERS_PATH=$HIVE_TRUSTED_PLAYWRIGHT_BROWSERS_PATH)" >&2
+              exit 1
+            fi
+            test "$(sha256sum "$executable" | cut -d ' ' -f 1)" = "$digest"
+            sudo -u hive-target -- test ! -w "$executable"
+            manifest_rows=$((manifest_rows + 1))
+          done < "$HIVE_TRUSTED_BROWSER_MANIFEST"
+          test "$manifest_rows" -ge 1
+          while IFS= read -r -d '' playwright_cli; do
+            expected_executable="$(sudo -u hive-target -- env -i -C "$HIVE_TARGET_WORKSPACE" HOME=/home/hive-target PATH="/home/hive-target/.local/bin:/home/hive-target/.venv/bin:$PATH" LANG=C.UTF-8 CI=true PLAYWRIGHT_BROWSERS_PATH="$HIVE_TRUSTED_PLAYWRIGHT_BROWSERS_PATH" HIVE_TARGET_WORKSPACE="$HIVE_TARGET_WORKSPACE" HIVE_TARGET_PROCESS=1 "$HIVE_TRUSTED_NODE" -e 'const path = require("node:path"); const cli = process.argv[1]; const runtime = require(require.resolve("playwright", { paths: [path.dirname(cli)] })); process.stdout.write(runtime.chromium.executablePath())' "$playwright_cli")"
+            expected_executable="$(readlink -f "$expected_executable")"
+            if ! grep -Fq "$(printf 'target\t%s\t%s\t' "$playwright_cli" "$expected_executable")" "$HIVE_TRUSTED_BROWSER_MANIFEST"; then
+              echo "Target Playwright runtime lacks a sealed executable binding: $playwright_cli expects $expected_executable" >&2
+              exit 1
+            fi
+            if ! timeout --signal=KILL 60s sudo -u hive-target -- env -i -C "$HIVE_TARGET_WORKSPACE" HOME=/home/hive-target PATH="/home/hive-target/.local/bin:/home/hive-target/.venv/bin:$PATH" LANG=C.UTF-8 CI=true PLAYWRIGHT_BROWSERS_PATH="$HIVE_TRUSTED_PLAYWRIGHT_BROWSERS_PATH" HIVE_TARGET_WORKSPACE="$HIVE_TARGET_WORKSPACE" HIVE_TARGET_PROCESS=1 "$HIVE_TRUSTED_NODE" -e 'const path = require("node:path"); const cli = process.argv[1]; const runtime = require(require.resolve("playwright", { paths: [path.dirname(cli)] })); (async () => { const browser = await runtime.chromium.launch({ headless: true }); await browser.close(); })().catch(error => { console.error(error); process.exit(1); });' "$playwright_cli"; then
+              echo "Target Playwright runtime could not launch its exact sealed headless browser: $playwright_cli (PLAYWRIGHT_BROWSERS_PATH=$HIVE_TRUSTED_PLAYWRIGHT_BROWSERS_PATH)" >&2
+              exit 1
+            fi
+          done < <(find "$HIVE_TARGET_WORKSPACE" -path '*/node_modules/@playwright/test/cli.js' -not -path '*/.git/*' -print0 | sort -z)
+          if [ -n "${HIVE_TRUSTED_BROWSER_EXECUTABLE:-}" ] && [ -n "${HIVE_TRUSTED_PLAYWRIGHT_BROWSERS_PATH:-}" ] && [ -n "${HIVE_TRUSTED_BROWSER_SHA:-}" ]; then
+            case "$HIVE_TRUSTED_BROWSER_EXECUTABLE" in
+              "$HIVE_TRUSTED_PLAYWRIGHT_BROWSERS_PATH"/*) ;;
+              *) echo "Pinned browser escaped its sealed root" >&2; exit 1 ;;
+            esac
+            test -x "$HIVE_TRUSTED_BROWSER_EXECUTABLE"
+            test "$(sha256sum "$HIVE_TRUSTED_BROWSER_EXECUTABLE" | cut -d ' ' -f 1)" = "$HIVE_TRUSTED_BROWSER_SHA"
+            sudo -u hive-target -- test ! -w "$HIVE_TRUSTED_BROWSER_EXECUTABLE"
+          else
+            echo "Pinned browser preparation did not complete" >&2
+          fi
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          git diff --no-ext-diff --no-textconv --exit-code -- .
+          sudo umount "$target_workspace"
+          cleanup_trusted_browser
+          if mountpoint -q "$target_workspace"; then
+            echo "Isolated target workspace remained mounted" >&2
+            exit 1
+          fi
+          test ! -e "$expected_browser_path"
+          test ! -e "$expected_browser_manifest"
+          evidence_root="$(readlink -f .visual-hive)"
+          workspace_root="$(readlink -f "$GITHUB_WORKSPACE")"
+          if [ "$evidence_root" != "$workspace_root/.visual-hive" ]; then
+            echo "Raw target evidence escaped the runner workspace" >&2
+            exit 1
+          fi
+          test -d "$evidence_root"
+          test ! -L "$evidence_root"
+          sudo chown root:root "$evidence_root"
+          sudo chmod 0555 "$evidence_root"
+          python_bin="$(readlink -f "$(command -v python)")"
+          test -x "$python_bin"
+          sudo env HIVE_EVIDENCE_ROOT="$evidence_root" HIVE_WORKSPACE_ROOT="$workspace_root" "$python_bin" -I - <<'PY'
+          import os
+          import stat
+
+          root = os.path.realpath(os.environ["HIVE_EVIDENCE_ROOT"])
+          workspace = os.path.realpath(os.environ["HIVE_WORKSPACE_ROOT"])
+          if root != os.path.join(workspace, ".visual-hive"):
+              raise SystemExit("raw evidence root is not the exact workspace child")
+          root_stat = os.lstat(root)
+          if not stat.S_ISDIR(root_stat.st_mode):
+              raise SystemExit("raw evidence root is not a directory")
+          device = root_stat.st_dev
+          files = 0
+          total = 0
+          pending = [root]
+          while pending:
+              current = pending.pop()
+              with os.scandir(current) as entries:
+                  for entry in entries:
+                      item = entry.stat(follow_symlinks=False)
+                      if item.st_dev != device:
+                          raise SystemExit("raw evidence contains a nested mount")
+                      if stat.S_ISLNK(item.st_mode):
+                          raise SystemExit("raw evidence contains a symbolic link")
+                      if stat.S_ISDIR(item.st_mode):
+                          pending.append(entry.path)
+                          continue
+                      if not stat.S_ISREG(item.st_mode):
+                          raise SystemExit("raw evidence contains a non-regular file")
+                      if item.st_nlink != 1:
+                          raise SystemExit("raw evidence contains a hard-linked file")
+                      files += 1
+                      total += item.st_size
+                      if files > 5000 or total > 1073741824:
+                          raise SystemExit("raw evidence exceeds its bounded upload limits")
+          PY
+          sudo find "$evidence_root" -xdev -type f -exec chown root:root -- {} +
+          sudo find "$evidence_root" -xdev -type f -exec chmod 0444 -- {} +
+          sudo find "$evidence_root" -xdev -depth -type d -exec chown root:root -- {} +
+          sudo find "$evidence_root" -xdev -depth -type d -exec chmod 0555 -- {} +
+          env HIVE_EVIDENCE_ROOT="$evidence_root" "$python_bin" -I - <<'PY'
+          import os
+          import stat
+
+          root = os.path.realpath(os.environ["HIVE_EVIDENCE_ROOT"])
+          pending = [root]
+          while pending:
+              current = pending.pop()
+              current_stat = os.lstat(current)
+              if current_stat.st_uid != 0 or current_stat.st_gid != 0 or current_stat.st_mode & 0o222:
+                  raise SystemExit("sealed evidence directory is not root-owned and read-only")
+              with os.scandir(current) as entries:
+                  for entry in entries:
+                      item = entry.stat(follow_symlinks=False)
+                      if item.st_uid != 0 or item.st_gid != 0 or item.st_mode & 0o222:
+                          raise SystemExit("sealed evidence entry is not root-owned and read-only")
+                      if stat.S_ISDIR(item.st_mode):
+                          pending.append(entry.path)
+                      elif stat.S_ISREG(item.st_mode):
+                          with open(entry.path, "rb") as handle:
+                              while handle.read(1024 * 1024):
+                                  pass
+                      else:
+                          raise SystemExit("sealed evidence contains an invalid entry")
+          PY
+          runner_pipeline_exit="$RUNNER_TEMP/hive-visual-pipeline-exit-${GITHUB_RUN_ID}.txt"
+          test -f "$runner_pipeline_exit"
+          test ! -L "$runner_pipeline_exit"
+          pipeline_exit="$(cat "$runner_pipeline_exit")"
+          case "$pipeline_exit" in
+            0) test "$HIVE_TARGET_PIPELINE_OUTCOME" = "success" ;;
+            ''|*[!0-9]*) echo "Visual pipeline exit code is invalid" >&2; exit 1 ;;
+            *) test "$HIVE_TARGET_PIPELINE_OUTCOME" = "failure" ;;
+          esac
+          test ! -e .visual-hive/pipeline-exit-code.txt
+          sudo install -o root -g root -m 0444 "$runner_pipeline_exit" .visual-hive/pipeline-exit-code.txt
+          rm -f -- "$runner_pipeline_exit"
+          runner_outcome="$RUNNER_TEMP/hive-visual-runner-outcome-${GITHUB_RUN_ID}.json"
+          RUNNER_OUTCOME_PATH="$runner_outcome" node <<'NODE'
+          const fs = require("fs");
+          const outcome = process.env.HIVE_TARGET_PIPELINE_OUTCOME;
+          const conclusion = process.env.HIVE_TARGET_PIPELINE_CONCLUSION;
+          if (!["success", "failure"].includes(outcome) || !["success", "failure"].includes(conclusion)) {
+            throw new Error("Visual pipeline lacks a terminal runner-owned outcome receipt");
+          }
+          fs.writeFileSync(process.env.RUNNER_OUTCOME_PATH, JSON.stringify({
+            schemaVersion: "hive.visual-runner-outcome.v1",
+            outcome,
+            conclusion
+          }) + "\n", { flag: "wx", mode: 0o600 });
+          NODE
+          sudo rm -f -- .visual-hive/hive-runner-outcome.json
+          sudo install -o root -g root -m 0444 "$runner_outcome" .visual-hive/hive-runner-outcome.json
+          rm -f -- "$runner_outcome"
+          test -f .visual-hive/hive-runner-outcome.json
+          test ! -L .visual-hive/hive-runner-outcome.json
+          test -r .visual-hive/hive-runner-outcome.json
+          test ! -w .visual-hive/hive-runner-outcome.json
+          test "$(stat -c '%u:%g:%a' .visual-hive/pipeline-exit-code.txt)" = "0:0:444"
+          test "$(stat -c '%u:%g:%a' .visual-hive/hive-runner-outcome.json)" = "0:0:444"
+          trap - EXIT
+      - name: Upload isolated raw Visual evidence
+        if: ${{ always() && steps.seal_raw_evidence.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: visual-hive-pr-raw-${{ github.run_id }}
+          path: .visual-hive
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 14
+      - name: Confirm target execution runner outcome
+        if: always()
+        shell: bash
+        env:
+          HIVE_TARGET_PIPELINE_OUTCOME: ${{ steps.target_visual_pipeline.outcome }}
+        run: |
+          set -euo pipefail
+                    if [[ "$HIVE_TARGET_PIPELINE_OUTCOME" != "success" && "$HIVE_TARGET_PIPELINE_OUTCOME" != "failure" ]]; then
+                      echo "Visual pipeline did not reach a terminal runner-owned outcome" >&2
+                      exit 1
+                    fi
+
+  visual-hive:
+    needs:
+      - setup-authorization
+      - visual-hive-execution
+      - repository-test-001
+      - repository-test-002
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    permissions:
+      contents: read
+      actions: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        if: ${{ needs.setup-authorization.outputs.operation != 'uninstall' }}
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        if: ${{ needs.setup-authorization.outputs.operation != 'uninstall' }}
+        with:
+          repository: DavidDiaz0317/visual-hive
+          ref: 73a99d7920e0380b9f57832a5453ef3c9c6748c1
+          path: .hive-visual-tooling
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        if: ${{ needs.setup-authorization.outputs.operation != 'uninstall' }}
+        with:
+          node-version: 22.23.1
+          cache: npm
+          cache-dependency-path: .hive-visual-tooling/package-lock.json
+      - name: Rebuild exact immutable Visual Hive CLI on fresh runner
+        if: ${{ needs.setup-authorization.outputs.operation != 'uninstall' }}
+        working-directory: .hive-visual-tooling
+        shell: bash
+        env:
+          HIVE_VISUAL_HIVE_REF: 73a99d7920e0380b9f57832a5453ef3c9c6748c1
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HIVE_VISUAL_HIVE_REF"
+          npm ci
+          npm run build
+          test -z "$(git status --porcelain --untracked-files=no)"
+          release_dir="$RUNNER_TEMP/visual-hive-release-${GITHUB_RUN_ID}"
+          rm -rf -- "$release_dir"
+          GITHUB_SHA="$HIVE_VISUAL_HIVE_REF" node scripts/build-release-bundle.mjs --output "$release_dir"
+          test -f "$release_dir/release-manifest.json"
+          echo "HIVE_VISUAL_HIVE_RELEASE_DIR=$release_dir" >> "$GITHUB_ENV"
+      - name: Seal reverified release outside target checkout
+        if: ${{ needs.setup-authorization.outputs.operation != 'uninstall' }}
+        shell: bash
+        env:
+          HIVE_VISUAL_HIVE_REF: 73a99d7920e0380b9f57832a5453ef3c9c6748c1
+        run: |
+          set -euo pipefail
+          case "$HIVE_VISUAL_HIVE_RELEASE_DIR" in
+            "$RUNNER_TEMP"/visual-hive-release-*) ;;
+            *) echo "Visual Hive release path escaped the runner temp root" >&2; exit 1 ;;
+          esac
+          trusted_tooling="$RUNNER_TEMP/visual-hive-tooling"
+          test ! -e "$trusted_tooling"
+          mv "$HIVE_VISUAL_HIVE_RELEASE_DIR" "$trusted_tooling"
+          rm -rf -- .hive-visual-tooling
+          cli="$trusted_tooling/visual-hive.mjs"
+          test -f "$cli"
+          node - "$trusted_tooling/release-manifest.json" "$HIVE_VISUAL_HIVE_REF" <<'NODE'
+          const fs = require("fs");
+          const [manifestPath, expectedCommit] = process.argv.slice(2);
+          const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+          if (manifest.schemaVersion !== "visual-hive.release.v1" || manifest.name !== "visual-hive" ||
+              manifest.gitCommit !== expectedCommit || manifest.release !== true || manifest.clean !== true ||
+              manifest.entrypoint !== "visual-hive.mjs") {
+            throw new Error("rebuilt Visual Hive release identity is incomplete or mismatched");
+          }
+          NODE
+          sudo chown -R root:root "$trusted_tooling"
+          sudo chmod -R a-w "$trusted_tooling"
+          echo "VISUAL_HIVE_CLI=$cli" >> "$GITHUB_ENV"
+
+      - name: Download isolated raw Visual evidence
+        if: ${{ needs.setup-authorization.outputs.operation != 'uninstall' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: visual-hive-pr-raw-${{ github.run_id }}
+          path: .visual-hive
+      - name: Capture runner-owned pull request scope
+        if: ${{ needs.setup-authorization.outputs.operation != 'uninstall' }}
+        shell: bash
+        env:
+          HIVE_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HIVE_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git diff --no-ext-diff --no-textconv --no-renames --name-only "$HIVE_BASE_SHA" "$HIVE_HEAD_SHA" > .visual-hive/changed-files.pr.txt
+      - name: Rebuild and validate runner-owned review evidence
+        if: ${{ needs.setup-authorization.outputs.operation != 'uninstall' }}
+        id: trusted_rebuild
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          runner_workspace="$(readlink -f "$GITHUB_WORKSPACE")"
+          review_workspace="/opt/hive-target/workspace"
+          test "$runner_workspace" = "$GITHUB_WORKSPACE"
+          test ! -e "/opt/hive-target"
+          sudo install -d -o root -g root -m 0755 "/opt/hive-target" "$review_workspace"
+          sudo mount --bind "$runner_workspace" "$review_workspace"
+          cleanup_review_workspace() {
+            cd "$runner_workspace" || true
+            if mountpoint -q "$review_workspace"; then
+              sudo umount "$review_workspace" || true
+            fi
+          }
+          trap cleanup_review_workspace EXIT
+          mountpoint -q "$review_workspace"
+          test "$(stat -Lc '%d:%i' "$review_workspace")" = "$(stat -Lc '%d:%i' "$runner_workspace")"
+          cd "$review_workspace"
+          test -f "$VISUAL_HIVE_CLI"
+          test ! -w "$VISUAL_HIVE_CLI"
+          test -d .visual-hive
+          if find .visual-hive -type l -print -quit | grep -q .; then
+            echo "Raw evidence contains a symbolic link" >&2
+            exit 1
+          fi
+          artifact_files="$(find .visual-hive -type f | wc -l)"
+          artifact_bytes="$(du -sb .visual-hive | cut -f 1)"
+          test "$artifact_files" -le 5000
+          test "$artifact_bytes" -le 1073741824
+           rm -f .visual-hive/evidence-packet.json .visual-hive/evidence-summary.md .visual-hive/verdict.json .visual-hive/verdict.md .visual-hive/issues.json .visual-hive/issues.md .visual-hive/baselines.json .visual-hive/artifacts-index.json .visual-hive/capability-parity.json .visual-hive/workflows.json .visual-hive/provider-results.json .visual-hive/testing-layers.json .visual-hive/testing-layers.md
+           rm -f .visual-hive/plan.json .visual-hive/plan.full.json
+          safe_env=(env -u GITHUB_TOKEN -u GH_TOKEN -u GITHUB_OUTPUT -u GITHUB_ENV -u GITHUB_PATH -u GITHUB_STEP_SUMMARY -u ACTIONS_ID_TOKEN_REQUEST_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_URL -u NODE_OPTIONS -u BASH_ENV -u ENV)
+          "${safe_env[@]}" node "$VISUAL_HIVE_CLI" plan --config visual-hive.config.yaml --mode full --output .visual-hive/plan.json
+          test -f .visual-hive/plan.json
+          test ! -e .visual-hive/plan.full.json
+          node <<'NODE'
+          const fs = require("fs");
+           const readJSON = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
+           const runnerOutcome = readJSON(".visual-hive/hive-runner-outcome.json");
+           if (runnerOutcome.schemaVersion !== "hive.visual-runner-outcome.v1" || !["success", "failure"].includes(runnerOutcome.outcome) ||
+               !["success", "failure"].includes(runnerOutcome.conclusion)) {
+             throw new Error("runner-owned Visual pipeline outcome receipt is malformed");
+           }
+           const pipeline = readJSON(".visual-hive/pipeline.json");
+          const report = readJSON(".visual-hive/report.json");
+          if (!Number.isInteger(pipeline.exitCode) || !["passed", "failed", "blocked"].includes(pipeline.status)) {
+            throw new Error("pipeline report lacks a terminal deterministic status");
+          }
+          fs.writeFileSync(".visual-hive/pipeline-exit-code.txt", String(pipeline.exitCode) + "\n");
+
+           const planPath = ".visual-hive/plan.json";
+           const plan = fs.existsSync(planPath) ? readJSON(planPath) : {};
+          const planRows = Array.isArray(plan.items) ? plan.items : [];
+          const planExcluded = Array.isArray(plan.excluded) ? plan.excluded : [];
+          const reportSelected = Array.isArray(report.selectedContracts) ? report.selectedContracts : [];
+          const reportExcluded = Array.isArray(report.excludedContracts) ? report.excludedContracts : [];
+          const results = Array.isArray(report.results) ? report.results : [];
+          const normalizedID = (value) => typeof value === "string" && value.trim() ? value.trim() : null;
+          const rowID = (row) => row && typeof row === "object" ? normalizedID(row.contractId || row.id) : null;
+          const sorted = (values) => [...values].sort();
+          const unique = (values) => new Set(values).size === values.length;
+          const sameIDs = (left, right) => JSON.stringify(sorted(left)) === JSON.stringify(sorted(right));
+          const plannedIDs = planRows.map(rowID);
+          const excludedPlanIDs = planExcluded.map(rowID);
+          const selectedIDs = reportSelected.map(normalizedID);
+          const excludedReportIDs = reportExcluded.map(rowID);
+          const resultIDs = results.map((result) => result && typeof result === "object" ? normalizedID(result.contractId) : null);
+          const identityComplete = Boolean(planPath) && Array.isArray(plan.items) && Array.isArray(plan.excluded) &&
+            Array.isArray(report.selectedContracts) && Array.isArray(report.excludedContracts) && Array.isArray(report.results) &&
+            [...plannedIDs, ...excludedPlanIDs, ...selectedIDs, ...excludedReportIDs, ...resultIDs].every(Boolean) &&
+            results.every((result) => result && typeof result === "object" && normalizedID(result.contractId) && ["passed", "failed", "created", "skipped"].includes(result.status));
+          if (!identityComplete || !unique(plannedIDs) || !unique(excludedPlanIDs) || !unique(selectedIDs) || !unique(excludedReportIDs) || !unique(resultIDs) ||
+              !sameIDs(plannedIDs, selectedIDs) || !sameIDs(excludedPlanIDs, excludedReportIDs) || !sameIDs(selectedIDs, resultIDs) ||
+              selectedIDs.some((contractID) => excludedPlanIDs.includes(contractID))) {
+            throw new Error("plan and report lack an exact one-to-one contract evaluation binding");
+          }
+           const passedIDs = runnerOutcome.outcome === "success"
+             ? sorted(results.filter((result) => result.status === "passed").map((result) => normalizedID(result.contractId)))
+             : [];
+          fs.writeFileSync(".visual-hive/evaluated-contracts.txt", passedIDs.length ? passedIDs.join("\n") + "\n" : "");
+           const authoritative = runnerOutcome.outcome === "success" && plannedIDs.length > 0 && passedIDs.length === plannedIDs.length && pipeline.mode === "full" && plan.mode === "full" && report.mode === "full" &&
+             pipeline.status === "passed" && pipeline.exitCode === 0 && report.status === "passed";
+           fs.writeFileSync(".visual-hive/authoritative-resolution.txt", authoritative ? "true\n" : "false\n");
+          NODE
+          "${safe_env[@]}" node "$VISUAL_HIVE_CLI" workflows --config visual-hive.config.yaml
+          "${safe_env[@]}" node "$VISUAL_HIVE_CLI" providers list --config visual-hive.config.yaml --mock-results --format json
+          "${safe_env[@]}" node "$VISUAL_HIVE_CLI" evidence --config visual-hive.config.yaml
+          "${safe_env[@]}" node "$VISUAL_HIVE_CLI" layers --config visual-hive.config.yaml --format json
+          "${safe_env[@]}" node "$VISUAL_HIVE_CLI" verdict --config visual-hive.config.yaml
+          "${safe_env[@]}" node "$VISUAL_HIVE_CLI" issues --config visual-hive.config.yaml --write
+          "${safe_env[@]}" node "$VISUAL_HIVE_CLI" baselines list --config visual-hive.config.yaml --write
+          "${safe_env[@]}" node "$VISUAL_HIVE_CLI" hive integration-smoke --config visual-hive.config.yaml --mode measured
+          "${safe_env[@]}" node "$VISUAL_HIVE_CLI" capabilities --config visual-hive.config.yaml
+          node <<'NODE'
+          const fs = require("fs");
+          const readJSON = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
+          const fail = (message) => { throw new Error(message); };
+          const scopes = fs.readFileSync(".visual-hive/evaluated-contracts.txt", "utf8").split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
+
+          const layers = readJSON(".visual-hive/testing-layers.json");
+          const layerStatuses = new Set(["covered", "partial", "missing", "not_applicable", "unknown"]);
+          if (layers.schemaVersion !== 1 || !Array.isArray(layers.layers) || layers.layers.length !== 12) fail("runner-owned testing-layer receipt is incomplete");
+          const layerIDs = layers.layers.map((layer) => layer && Number.isInteger(layer.id) ? layer.id : -1);
+          if (new Set(layerIDs).size !== 12 || layerIDs.some((id) => id < 0 || id > 11) ||
+              layers.layers.some((layer) => !layerStatuses.has(layer.status) || !Array.isArray(layer.evidence) || !Array.isArray(layer.gaps) || !Array.isArray(layer.skippedReasons))) {
+            fail("runner-owned testing-layer receipt is malformed");
+          }
+          const resolvedLayerStatuses = new Set(["covered", "not_applicable"]);
+          for (const layer of layers.layers) {
+            if (resolvedLayerStatuses.has(layer.status) && layer.gaps.length === 0 && layer.skippedReasons.length === 0) {
+              scopes.push("testing-layer:" + layer.id);
+            }
+          }
+
+          const workflows = readJSON(".visual-hive/workflows.json");
+          if (workflows.schemaVersion !== 1 || !workflows.summary || typeof workflows.summary !== "object" ||
+              !Array.isArray(workflows.workflows) || workflows.workflows.length === 0 || !Array.isArray(workflows.findings) ||
+              workflows.workflows.some((workflow) => !workflow || typeof workflow.path !== "string" || !workflow.path.trim())) {
+            fail("runner-owned workflow-safety receipt is malformed");
+          }
+          const workflowPaths = workflows.workflows.map((workflow) => workflow.path.trim());
+          if (new Set(workflowPaths).size !== workflowPaths.length) fail("runner-owned workflow-safety receipt contains duplicate paths");
+          if (workflows.findings.length === 0) scopes.push("workflow-safety");
+
+          const providers = readJSON(".visual-hive/provider-results.json");
+          const evidence = readJSON(".visual-hive/evidence-packet.json");
+          const report = readJSON(".visual-hive/report.json");
+          if (providers.schemaVersion !== 1 || !Array.isArray(providers.providers) || providers.providers.length === 0 || !Array.isArray(evidence.providers)) {
+            fail("runner-owned provider-governance receipt is incomplete");
+          }
+          const providerRows = providers.providers.map((provider) => ({
+            id: provider && typeof provider.providerId === "string" ? provider.providerId.trim() : "",
+            resultID: provider && provider.result && typeof provider.result.providerId === "string" ? provider.result.providerId.trim() : "",
+            status: provider && provider.result && typeof provider.result.status === "string" ? provider.result.status : "",
+            uploadStatus: provider && provider.result && provider.result.upload && typeof provider.result.upload.status === "string" ? provider.result.upload.status : ""
+          }));
+          const evidenceRows = evidence.providers.map((provider) => ({
+            id: provider && typeof provider.providerId === "string" ? provider.providerId.trim() : "",
+            status: provider && typeof provider.status === "string" ? provider.status : "",
+            uploadStatus: provider && provider.upload && typeof provider.upload.status === "string" ? provider.upload.status : ""
+          }));
+          const reportRows = (Array.isArray(report.providerResults) ? report.providerResults : []).map((provider) => ({
+            id: provider && typeof provider.providerId === "string" ? provider.providerId.trim() : "",
+            status: provider && typeof provider.status === "string" ? provider.status : "",
+            uploadStatus: provider && provider.upload && typeof provider.upload.status === "string" ? provider.upload.status : ""
+          }));
+          const providerStatuses = new Set(["passed", "failed", "skipped", "missing_credentials", "mock"]);
+          const providerUploadStatuses = new Set(["uploaded", "skipped", "blocked", "missing_credentials", "failed", "dry_run"]);
+          const providerReceipt = (row) => row.id + "\u0000" + row.status + "\u0000" + row.uploadStatus;
+          if (providerRows.some((row) => !row.id || row.id !== row.resultID || !providerStatuses.has(row.status) || (row.uploadStatus && !providerUploadStatuses.has(row.uploadStatus))) ||
+              new Set(providerRows.map((row) => row.id)).size !== providerRows.length ||
+              reportRows.some((row) => !row.id || !providerStatuses.has(row.status) || (row.uploadStatus && !providerUploadStatuses.has(row.uploadStatus))) ||
+              new Set(reportRows.map((row) => row.id)).size !== reportRows.length ||
+              JSON.stringify([...reportRows, ...providerRows].map(providerReceipt).sort()) !== JSON.stringify(evidenceRows.map(providerReceipt).sort())) {
+            fail("runner-owned provider-governance receipt does not match rebuilt evidence");
+          }
+          const issueProducingProviderStatuses = new Set(["failed", "missing_credentials", "blocked"]);
+          if (evidenceRows.every((row) => !issueProducingProviderStatuses.has(row.status) && !issueProducingProviderStatuses.has(row.uploadStatus))) {
+            scopes.push("provider-governance");
+          }
+
+          const evaluated = [...new Set(scopes)].sort();
+          fs.writeFileSync(".visual-hive/evaluated-contracts.txt", evaluated.join("\n") + "\n");
+          NODE
+          "${safe_env[@]}" node "$VISUAL_HIVE_CLI" artifacts --config visual-hive.config.yaml --complete
+          cleanup_review_workspace
+          trap - EXIT
+          if mountpoint -q "$review_workspace"; then
+            echo "Runner-owned review workspace remained mounted" >&2
+            exit 1
+          fi
+      - name: Enforce deterministic verdict
+        if: always()
+        shell: bash
+        env:
+          HIVE_NEEDS_JSON: ${{ toJSON(needs) }}
+          HIVE_EXPECTED_REPOSITORY_JOBS: '["repository-test-001","repository-test-002"]'
+          HIVE_REPOSITORY: ${{ github.repository }}
+          HIVE_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HIVE_SETUP_AUTHORIZED: ${{ needs.setup-authorization.outputs.authorized }}
+          HIVE_SETUP_CONTEXT: ${{ needs.setup-authorization.outputs.context }}
+          HIVE_SETUP_BINDING_DIGEST: ${{ needs.setup-authorization.outputs.binding_digest }}
+          HIVE_SETUP_DIFF_DIGEST: ${{ needs.setup-authorization.outputs.diff_digest }}
+          HIVE_SETUP_OPERATION: ${{ needs.setup-authorization.outputs.operation }}
+          HIVE_TRUSTED_REBUILD_OUTCOME: ${{ steps.trusted_rebuild.outcome }}
+        run: |
+          set -euo pipefail
+          if [ "$HIVE_SETUP_OPERATION" = "uninstall" ]; then
+            test "$HIVE_SETUP_AUTHORIZED" = "true"
+            echo "Exact out-of-band-authorized Hive uninstall; all managed files are absent at this immutable head."
+            exit 0
+          fi
+          node <<'NODE'
+          const fs = require("fs");
+                    const needs = JSON.parse(process.env.HIVE_NEEDS_JSON || "{}");
+                    const expected = JSON.parse(process.env.HIVE_EXPECTED_REPOSITORY_JOBS || "[]");
+                    const actualRepositoryJobs = Object.keys(needs).filter((name) => name.startsWith("repository-test-")).sort();
+                    if (JSON.stringify(actualRepositoryJobs) !== JSON.stringify(expected)) {
+                      throw new Error("runner-owned repository job topology does not match the installed plan");
+                    }
+                    if (!needs["visual-hive-execution"] || !["success", "failure"].includes(needs["visual-hive-execution"].result)) {
+                      throw new Error("isolated target execution lacks a terminal runner result");
+                    }
+                    for (const name of expected) {
+                      if (!needs[name] || !["success", "failure"].includes(needs[name].result)) {
+                        throw new Error("repository test job lacks a terminal runner result: " + name);
+                      }
+                    }
+                    const repositoryFailed = expected.some((name) => needs[name].result === "failure");
+                    const pipeline = JSON.parse(fs.readFileSync(".visual-hive/pipeline.json", "utf8"));
+                    const report = JSON.parse(fs.readFileSync(".visual-hive/report.json", "utf8"));
+                    const verdict = JSON.parse(fs.readFileSync(".visual-hive/verdict.json", "utf8"));
+                    const readiness = fs.existsSync(".visual-hive/readiness.json") ? JSON.parse(fs.readFileSync(".visual-hive/readiness.json", "utf8")) : {};
+                    const visualVerdict = verdict?.summary?.visualHiveVerdict;
+                    const summary = report.summary || {};
+                    const verdictSummary = verdict.summary || {};
+                    const contributions = Array.isArray(verdict.gatingContributions) ? verdict.gatingContributions : [];
+                    const screenshots = (Array.isArray(report.results) ? report.results : []).flatMap((result) => Array.isArray(result.screenshotAssertions) ? result.screenshotAssertions : []);
+                    const blocking = contributions.filter((item) => item && item.gating === true && item.status !== "passed");
+                    const visualPassed = needs["visual-hive-execution"].result === "success" && process.env.HIVE_TRUSTED_REBUILD_OUTCOME === "success" && pipeline.exitCode === 0 && ["passed", "warning"].includes(visualVerdict) && Array.isArray(verdict.gatingContributions) && blocking.length === 0;
+                    const missing = screenshots.filter((item) => item && item.status === "missing_baseline");
+                    const readinessBlocked = (Array.isArray(readiness.gates) ? readiness.gates : []).filter((gate) => gate && gate.status === "blocked");
+                    const exclusiveMissingBaselineReadiness = readiness.status === "blocked" && readinessBlocked.some((gate) => gate.id === "baselines:missing-baseline") &&
+                      readinessBlocked.every((gate) => ["deterministic:status", "baselines:missing-baseline"].includes(gate.id));
+                    const exclusiveMissingBaseline = ["failed", "blocked"].includes(report.status) && verdictSummary.visualHiveVerdict === "blocked" &&
+                      Array.isArray(verdictSummary.failedBecause) && verdictSummary.failedBecause.length === 0 &&
+                      Number(summary.missingBaselines) > 0 && Number(summary.missingBaselines) === missing.length &&
+                      Number(summary.visualDiffs || 0) === 0 && Number(summary.consoleErrors || 0) === 0 && Number(summary.pageErrors || 0) === 0 && Number(summary.flowStepsFailed || 0) === 0 &&
+                      exclusiveMissingBaselineReadiness && blocking.some((item) => item.kind === "missing_baseline") && blocking.every((item) => item.status === "blocked" && ["deterministic_run", "contract_result", "missing_baseline", "readiness_gate"].includes(item.kind)) &&
+                      missing.every((item) => item.contractId && (item.screenshotName || item.name) && item.baselinePath && item.actualPath);
+                    if (!repositoryFailed && process.env.HIVE_SETUP_OPERATION === "setup" && process.env.HIVE_SETUP_AUTHORIZED === "true" && exclusiveMissingBaseline) {
+                      const proof = {
+                        schemaVersion: "hive.setup-baseline-required.v1", repository: process.env.HIVE_REPOSITORY,
+                        headSha: process.env.HIVE_HEAD_SHA, missingBaselines: missing.length,
+                        authorizationContext: process.env.HIVE_SETUP_CONTEXT, bindingDigest: process.env.HIVE_SETUP_BINDING_DIGEST,
+                        diffDigest: process.env.HIVE_SETUP_DIFF_DIGEST,
+                        disposition: "exact_setup_authorized_missing_baselines_only; hosted_post_merge_capture_required"
+                      };
+                      fs.writeFileSync(".visual-hive/setup-baseline-required.json", JSON.stringify(proof, null, 2) + "\n");
+                      console.log("::warning::Exact setup is blocked only by absent initial baselines. Merge may proceed; Hive must capture and review Linux baselines before production activation or lifecycle writes.");
+                      process.exit(0);
+                    }
+                    if (repositoryFailed && visualPassed && process.env.HIVE_SETUP_AUTHORIZED === "true") {
+                      const proof = {
+                        schemaVersion: "hive.setup-bootstrap-repository-failure.v2",
+                        repository: process.env.HIVE_REPOSITORY,
+                        headSha: process.env.HIVE_HEAD_SHA,
+                        repositoryOutcome: "failure",
+                        visualOutcome: "success",
+                        authorizationContext: process.env.HIVE_SETUP_CONTEXT,
+                        bindingDigest: process.env.HIVE_SETUP_BINDING_DIGEST,
+                        diffDigest: process.env.HIVE_SETUP_DIFF_DIGEST,
+                        disposition: "out_of_band_exact_setup_authorization; production Hive repairs the runner-owned repository-test failure"
+                      };
+                      fs.writeFileSync(".visual-hive/setup-bootstrap-repository-failure.json", JSON.stringify(proof, null, 2) + "\n");
+                      console.log("::warning::The runner-owned repository test plan is already failing. This exact out-of-band-authorized setup PR may install Hive; production Hive will open and repair the failure. Every unauthorized PR remains blocked.");
+                      process.exit(0);
+                    }
+                    if (repositoryFailed) throw new Error("Repository test plan failed");
+                    if (!visualPassed) throw new Error("Isolated deterministic Visual Hive verdict failed");
+          NODE
+      - name: Upload review evidence
+        if: ${{ always() && needs.setup-authorization.outputs.operation != 'uninstall' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: visual-hive-pr
+          path: .visual-hive
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 14
